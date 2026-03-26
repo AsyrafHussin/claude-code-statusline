@@ -94,4 +94,4 @@ See the [Claude Code statusline docs](https://docs.anthropic.com/en/docs/claude-
 
 ## License
 
-MIT
+[MIT](LICENSE)
