@@ -4,10 +4,7 @@ A clean, informative status line for [Claude Code](https://docs.anthropic.com/en
 
 ## Preview
 
-```
-agent-skills | main synced | Opus 4.6 (1M context) | 20m22s | Thu 26 Mar 08:37 AM
-ctx 5% (128k/1.0m) | session 9% resets 3h24m | weekly 7%
-```
+![Claude Code Status Line Preview](preview.png)
 
 ## What It Shows
 
