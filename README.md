@@ -25,7 +25,7 @@ A clean, informative status line for [Claude Code](https://docs.anthropic.com/en
 |---------|-------------|
 | **ctx** | Context window usage with token count (e.g., `5% (128k/1.0m)`) |
 | **session** | 5-hour session rate limit with reset countdown |
-| **weekly** | 7-day all-models rate limit |
+| **weekly** | 7-day all-models rate limit with reset countdown |
 
 All percentages are color-coded: **green** (< 50%), **yellow** (50-79%), **red** (80%+).
 
