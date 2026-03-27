@@ -13,6 +13,7 @@ duration_ms=$(echo "$input" | jq -r '.cost.total_duration_ms // 0 | floor')
 five_h=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
 five_h_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
 seven_d=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+seven_d_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
 
 # --- Folder name only ---
 folder="${cwd##*/}"
@@ -153,8 +154,25 @@ fi
 if [ -n "$seven_d" ] && [ "$seven_d" != "null" ]; then
   printf -v seven_int "%.0f" "$seven_d"
   seven_c=$(pct_color "$seven_int")
+  weekly_reset_hint=""
+  if [ -n "$seven_d_reset" ] && [ "$seven_d_reset" != "null" ]; then
+    now=$(date +%s)
+    diff=$(( seven_d_reset - now ))
+    if [ "$diff" -gt 0 ]; then
+      reset_days=$(( diff / 86400 ))
+      reset_h=$(( (diff % 86400) / 3600 ))
+      reset_m=$(( (diff % 3600) / 60 ))
+      if [ "$reset_days" -gt 0 ]; then
+        weekly_reset_hint=" ${DIM}resets ${reset_days}d${reset_h}h${RST}"
+      elif [ "$reset_h" -gt 0 ]; then
+        weekly_reset_hint=" ${DIM}resets ${reset_h}h${reset_m}m${RST}"
+      else
+        weekly_reset_hint=" ${DIM}resets ${reset_m}m${RST}"
+      fi
+    fi
+  fi
   [ -n "$line2" ] && line2+="${sep}"
-  line2+="${DIM}weekly${RST} ${seven_c}${seven_int}%${RST}"
+  line2+="${DIM}weekly${RST} ${seven_c}${seven_int}%${RST}${weekly_reset_hint}"
 fi
 
 if [ -n "$line2" ]; then
