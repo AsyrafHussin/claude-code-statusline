@@ -7,8 +7,14 @@ input=$(cat)
 cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty')
 model=$(echo "$input" | jq -r '.model.display_name // empty')
 ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
-ctx_tokens=$(echo "$input" | jq -r '.context_window.total_input_tokens // empty')
 ctx_size=$(echo "$input" | jq -r '.context_window.context_window_size // empty')
+# Use current_usage (actual context state) not cumulative totals, to match used_percentage
+ctx_tokens=$(echo "$input" | jq -r '
+  .context_window.current_usage // empty |
+  if . then
+    (.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0)
+  else empty end
+')
 duration_ms=$(echo "$input" | jq -r '.cost.total_duration_ms // 0 | floor')
 five_h=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
 five_h_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
