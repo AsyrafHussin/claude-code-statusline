@@ -67,6 +67,50 @@ chmod +x ~/.claude/statusline-command.sh
 
 3. Restart Claude Code.
 
+### Windows
+
+The status line is a Bash script, so on Windows it runs through **Git Bash** (bundled with [Git for Windows](https://git-scm.com/download/win)). Two things differ from macOS/Linux:
+
+1. **Dependencies must be reachable by Git Bash.** Install `jq` and Git, then make sure Git Bash's `bin` folder is on your PATH so `bash` resolves:
+
+   ```powershell
+   winget install jqlang.jq
+   winget install Git.Git
+   # Add Git Bash to PATH (so `bash` is found), then open a NEW terminal:
+   [Environment]::SetEnvironmentVariable(
+     "Path",
+     [Environment]::GetEnvironmentVariable("Path","User") + ";C:\Program Files\Git\bin",
+     "User")
+   ```
+
+2. **Use a forward-slash (Unix-style) path in the command.** Claude Code runs the status line via `sh`, which treats backslashes as escapes — a `C:\...` path silently breaks. Use `/c/Users/...` instead.
+
+#### Quick Install (PowerShell)
+
+```powershell
+git clone https://github.com/AsyrafHussin/claude-code-statusline.git
+cd claude-code-statusline
+./install.ps1
+```
+
+#### Manual Install (Windows)
+
+1. Copy the script to `%USERPROFILE%\.claude\statusline-command.sh`.
+2. Add to `~/.claude/settings.json` (note the `/c/Users/<you>/...` path):
+
+   ```json
+   {
+     "statusLine": {
+       "type": "command",
+       "command": "bash /c/Users/<you>/.claude/statusline-command.sh"
+     }
+   }
+   ```
+
+3. Restart Claude Code.
+
+> **Tip:** If `jq` isn't picked up by the status line hook, copy `jq.exe` into a folder already on Git Bash's PATH (e.g. `%USERPROFILE%\bin`).
+
 ## Git Status Indicators
 
 | Status | Color | Meaning |
