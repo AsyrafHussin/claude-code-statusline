@@ -408,10 +408,17 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
       : []
     const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, cardWidth - width(lastSegs) - 4))), line('─╯')]
 
-    // Inside: the controls, progress and the time, then shuffle, repeat and volume on the right
+    // Inside: the controls, progress and the time, then shuffle, repeat and volume on the right. As the
+    // card narrows, the toggles go first, then the progress bar, so nothing wraps or runs together
     const toggles = `shuffle · repeat · vol − ${m.volume}% +`
     // The controls take ◀◀ ❚❚ ▶▶ and "search", 23 columns with their gaps
-    const cells = Math.max(10, cardWidth - 2 - 4 - 23 - (time.length + 2) - toggles.length - 4)
+    const CONTROLS = 23
+    const inner = cardWidth - 2 - 4
+    const MIN_BAR = 8
+    const hasToggles = inner >= CONTROLS + 4 + MIN_BAR + 2 + time.length + 3 + toggles.length
+    const hasBar = inner >= CONTROLS + 4 + MIN_BAR + 2 + time.length
+    const hasTime = inner >= CONTROLS + 4 + time.length
+    const cells = hasBar ? Math.max(MIN_BAR, inner - CONTROLS - 4 - (time.length + 2) - (hasToggles ? toggles.length + 3 : 0)) : 0
     const filled = m.durationMs > 0 ? Math.min(cells, Math.round((m.positionMs / m.durationMs) * cells)) : 0
     const toggle = (key: MusicCommand, label: string, isOn: boolean) => (
       <Button key={`music-${key}`} plain dimColor={!isOn} label={label} onPress={() => view.onMusic(key)} />
@@ -433,7 +440,7 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
           <Box width={cardWidth}>
             <Text wrap="truncate">{draw([line('│')])}</Text>
             <Box flexGrow={1} paddingX={2} justifyContent="space-between">
-              <Box>
+              <Box flexShrink={0}>
                 <Button key="music-previous" plain label="◀◀" onPress={() => view.onMusic('previous')} />
                 <Text>{'  '}</Text>
                 <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶ '} onPress={() => view.onMusic('playpause')} />
@@ -441,14 +448,16 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
                 <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next')} />
                 <Text>{'   '}</Text>
                 <Button key="music-search" plain dimColor label="search" onPress={() => view.onMusic('search')} />
-                <Text>{'    '}</Text>
-                <Text wrap="truncate">
-                  <Text color={SPOTIFY_GREEN}>{'━'.repeat(filled)}</Text>
-                  <Text dimColor>{'━'.repeat(cells - filled)}</Text>
-                  <Text dimColor>{`  ${time}`}</Text>
-                </Text>
+                {hasTime ? <Text>{'    '}</Text> : null}
+                {hasTime ? (
+                  <Text wrap="truncate">
+                    <Text color={SPOTIFY_GREEN}>{'━'.repeat(filled)}</Text>
+                    <Text dimColor>{'━'.repeat(cells - filled)}</Text>
+                    <Text dimColor>{`${hasBar ? '  ' : ''}${time}`}</Text>
+                  </Text>
+                ) : null}
               </Box>
-              <Box>
+              <Box flexShrink={0} display={hasToggles ? 'flex' : 'none'}>
                 {toggle('shuffle', 'shuffle', m.isShuffling)}
                 <Text dimColor>{' · '}</Text>
                 {toggle('repeat', 'repeat', m.isRepeating)}
@@ -513,23 +522,27 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
         </Box>
       </Box>
       {/* Drawn plain, as the band's own dim text: "1: push · 2: find bugs · ...", the repo's switches on the right */}
-      <Box marginLeft={INDENT} width={total - 4} justifyContent="space-between">
-        <Box>
-          {view.actions.flatMap((action, i) => [
-            ...(i === 0 ? [] : [<Text key={`sep-${action.key}`} dimColor>{' · '}</Text>]),
-            <Button
-              key={`action-${action.key}`}
-              plain
-              dimColor
-              label={action.label}
-              hotkey={action.hotkey}
-              onPress={() => view.onAction(action)}
-            />,
-          ])}
+      {/* Each action keeps its separator; on a narrow screen they wrap whole, and the switches drop to
+          their own line, rather than running together */}
+      <Box marginLeft={INDENT} width={total - 4} justifyContent="space-between" flexWrap="wrap">
+        <Box flexWrap="wrap" flexShrink={1}>
+          {view.actions.map((action, i) => (
+            <Box key={`action-box-${action.key}`} flexShrink={0}>
+              {i === 0 ? null : <Text dimColor>{' · '}</Text>}
+              <Button
+                key={`action-${action.key}`}
+                plain
+                dimColor
+                label={action.label}
+                hotkey={action.hotkey}
+                onPress={() => view.onAction(action)}
+              />
+            </Box>
+          ))}
         </Box>
         {/* The repo's state, as words: "commit auto · push ask"; the label toggles, the word says which */}
         {gitAuto && (
-          <Box>
+          <Box flexShrink={0}>
             {(['commit', 'push'] as const).flatMap((step, i) => [
               ...(i === 0 ? [] : [<Text key={`switch-sep-${step}`} dimColor>{' · '}</Text>]),
               <Button key={`switch-${step}`} plain dimColor label={step} onPress={() => view.onSwitch(step)} />,

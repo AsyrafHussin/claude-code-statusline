@@ -606,7 +606,7 @@ async function openSearch($: EngineInterface) {
       tracks: [],
     }))
   }
-  await $.ui.open({ id: SEARCH_PANE, title: 'Search Spotify', focus: true, closeOnEscape: true, holdToasts: true, rows: 20, columns: 110 })
+  await $.ui.open({ id: SEARCH_PANE, title: 'Search Spotify', focus: true, closeOnEscape: true, holdToasts: true, rows: 20, columns: 72 })
 }
 
 async function searchSpotify($: EngineInterface, query: string) {
