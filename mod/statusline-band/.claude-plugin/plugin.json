@@ -1,6 +1,6 @@
 {
   "name": "statusline-band",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A panel above the prompt with rate limits and their pace, context, cost and tokens, git status, and Clawd beside it",
   "author": {
     "name": "Asyraf Hussin"
@@ -40,12 +40,6 @@
       "title": "History days",
       "description": "Days the rolling cost total and the history pane cover, 7 to 62",
       "default": 30
-    },
-    "fetchMinutes": {
-      "type": "number",
-      "title": "Fetch every (minutes)",
-      "description": "How often the upstream is fetched so 'behind' stays current; 0 turns it off",
-      "default": 5
     }
   }
 }

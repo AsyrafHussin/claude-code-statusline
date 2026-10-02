@@ -9,7 +9,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // What each person sets for themselves in /config, the manifest's userConfig, with out-of-range numbers clamped
-export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, fetchMinutes: 5 }
+export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30 }
 
 export const readConfig = (options: PluginOptions) => {
   const text = (key: string, fallback: string) => (typeof options[key] === 'string' ? (options[key] as string) : fallback)
@@ -20,7 +20,6 @@ export const readConfig = (options: PluginOptions) => {
     card: text('cardColor', DEFAULTS.card),
     padRows: whole('padRows', DEFAULTS.padRows, 0, 2),
     rollingDays: whole('historyDays', DEFAULTS.rollingDays, 7, 62),
-    fetchMinutes: whole('fetchMinutes', DEFAULTS.fetchMinutes, 0, 60),
   }
 }
 

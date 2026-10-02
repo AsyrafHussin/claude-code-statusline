@@ -50,11 +50,6 @@ const COST_KEY = 'costs-v2'
 // Tokens are counted by the mod at each turn's end, so they start from when it was installed
 const TOKEN_KEY = 'tokens-v1'
 const GIT_TIMEOUT = { timeoutMs: 5000 }
-// Fetched in the background so "behind" stays true; never prompts for credentials
-const FETCH_INIT = {
-  timeoutMs: 30_000,
-  env: { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' },
-}
 // Clawd, the Claude Code mascot, beside the panel in a shirt with the owner's initials:
 // standing when idle, running while Claude works (arms and legs trade places each step,
 // dust kicked up behind)
@@ -123,8 +118,6 @@ function startTimers($: EngineInterface) {
   if (hasTimers) return
   hasTimers = true
   $.clock.every(30_000, () => void refresh($))
-  if (config.fetchMinutes > 0) void fetchUpstream($)
-  if (config.fetchMinutes > 0) $.clock.every(config.fetchMinutes * 60_000, () => void fetchUpstream($))
   $.clock.every(MOOD_TICK_MS, () => void tickMood($))
   $.clock.every(BLINK_EVERY_MS, () => {
     void update($, isBlinking, () => true)
@@ -194,12 +187,6 @@ async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']
     stashed,
     lastCommitAt: last.exitCode === 0 && last.stdout.trim() ? Number(last.stdout.trim()) * 1000 : null,
   }
-}
-
-async function fetchUpstream($: EngineInterface) {
-  const cwd = await $.session.cwd()
-  const fetched = await $.process.run(['git', '-C', cwd, 'fetch', '--quiet', '--no-tags'], FETCH_INIT).catch(() => null)
-  if (fetched?.exitCode === 0) void refresh($)
 }
 
 // Adds what this session spent since its last reading to today's total, kept across sessions.

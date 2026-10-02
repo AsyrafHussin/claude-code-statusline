@@ -155,7 +155,7 @@ Each is a row in `/config`, or set them in `~/.claude/settings.json`:
 {
   "pluginConfigs": {
     "statusline-band": {
-      "options": { "initials": "AH", "cardColor": "#0a0a0a", "padRows": 1, "historyDays": 30, "fetchMinutes": 5 }
+      "options": { "initials": "AH", "cardColor": "#0a0a0a", "padRows": 1, "historyDays": 30 }
     }
   }
 }
@@ -167,7 +167,6 @@ Each is a row in `/config`, or set them in `~/.claude/settings.json`:
 | `cardColor` | `#0a0a0a` | Background of the card |
 | `padRows` | `1` | Empty rows above and below the stats, 0 to 2 |
 | `historyDays` | `30` | Days the rolling cost and the history pane cover, 7 to 62 |
-| `fetchMinutes` | `5` | How often the upstream is fetched; `0` turns it off |
 
 ### Tests
 
@@ -177,7 +176,7 @@ The pure logic (pace, dates, the 30-day sums, formatting, settings) lives in `ho
 claude plugin test mod/statusline-band
 ```
 
-It fetches the upstream in the background every 5 minutes by default (never prompting for credentials) so `behind` stays current. It also toasts once when a rate limit passes 80% and 95%, and once when its pace would use it up before the reset, and shows a `compact` button when context passes 80%.
+It never fetches or reaches the network: `behind` counts against the remote as of your own last fetch or pull. It also toasts once when a rate limit passes 80% and 95%, and once when its pace would use it up before the reset, and shows a `compact` button when context passes 80%.
 
 ### Install the mod
 

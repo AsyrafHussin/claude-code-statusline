@@ -103,12 +103,11 @@ describe('settings', () => {
   })
 
   test('clamps numbers and falls back on missing values', () => {
-    expect(readConfig({ padRows: 9, historyDays: 3, fetchMinutes: -1 })).toEqual({
+    expect(readConfig({ padRows: 9, historyDays: 3 })).toEqual({
       initials: '',
       card: '#0a0a0a',
       padRows: 2,
       rollingDays: 7,
-      fetchMinutes: 0,
     })
     expect(readConfig({ initials: 'AH', cardColor: '#000000' })).toMatchObject({ initials: 'AH', card: '#000000' })
   })
