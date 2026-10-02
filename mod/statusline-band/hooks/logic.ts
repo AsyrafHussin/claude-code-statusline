@@ -492,8 +492,13 @@ export const readBmp = (bytes: Uint8Array): { width: number; height: number; pix
   return { width, height, pixels }
 }
 
-// A picture as Raster cells: each cell an upper half block (▀) whose ink is the upper pixel and whose
-// paper is the lower one, so a cell shows two pixels; little-endian u32 triplets, base64
+// A pixel left clear: the terminal's own background shows through it
+export const CLEAR = 0x01000000
+
+// A picture as Raster cells, two pixels a cell: an upper half block (▀) with the upper pixel as ink and
+// the lower as paper. A clear pixel takes the terminal's own background: a clear pair is a space, and
+// one clear half is drawn by the other half's block (▀ or ▄) over the terminal's paper; ink is never
+// left to the terminal, whose own ink is its text color. Little-endian u32 triplets, base64
 export const pixelsToCells = (picture: { width: number; height: number; pixels: number[] }, columns: number, rows: number) => {
   const words = new Uint32Array(columns * rows * 3)
   const at = (x: number, y: number) => {
@@ -504,9 +509,17 @@ export const pixelsToCells = (picture: { width: number; height: number; pixels: 
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < columns; c += 1) {
       const i = (r * columns + c) * 3
-      words[i] = 0x2580
-      words[i + 1] = at(c, r * 2)
-      words[i + 2] = at(c, r * 2 + 1)
+      const upper = at(c, r * 2)
+      const lower = at(c, r * 2 + 1)
+      const cell =
+        upper === CLEAR && lower === CLEAR
+          ? [0x20, CLEAR, CLEAR]
+          : upper === CLEAR
+            ? [0x2584, lower, CLEAR]
+            : lower === CLEAR
+              ? [0x2580, upper, CLEAR]
+              : [0x2580, upper, lower]
+      words.set(cell, i)
     }
   }
   return toBase64(new Uint8Array(words.buffer))

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   aliasSteps,
+  CLEAR,
   barCells,
   cleanCommitMessage,
   gitGuide,
@@ -415,6 +416,13 @@ describe('spotify', () => {
     const bmp = new Uint8Array([...header, ...rows])
     expect(readBmp(bmp)).toEqual({ width: 2, height: 2, pixels: [0x0000ff, 0xffffff, 0xff0000, 0x00ff00] })
     expect(readBmp(new Uint8Array([1, 2, 3]))).toBe(null)
+  })
+
+  test('a clear pixel never leaves the ink to the terminal', () => {
+    const words = (pixels: number[]) => [...new Uint32Array(fromBase64(pixelsToCells({ width: 1, height: 2, pixels }, 1, 1)).buffer)]
+    expect(words([CLEAR, CLEAR])).toEqual([0x20, CLEAR, CLEAR])
+    expect(words([CLEAR, 0x00ff00])).toEqual([0x2584, 0x00ff00, CLEAR])
+    expect(words([0x00ff00, CLEAR])).toEqual([0x2580, 0x00ff00, CLEAR])
   })
 
   test('draws two pixels a cell, the upper as ink', () => {
