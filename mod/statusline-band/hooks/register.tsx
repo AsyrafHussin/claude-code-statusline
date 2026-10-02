@@ -96,6 +96,19 @@ const sparkline = (values: number[]) => {
 
 let isRefreshing = false
 let runner: { cancel: () => void } | null = null
+let hasTimers = false
+
+// The refresh and blink timers. Started by whichever event comes first, since a hot reload
+// starts the module over without a new session.start
+function startTimers($: EngineInterface) {
+  if (hasTimers) return
+  hasTimers = true
+  $.clock.every(30_000, () => void refresh($))
+  $.clock.every(BLINK_EVERY_MS, () => {
+    void update($, isBlinking, () => true)
+    $.clock.after(BLINK_FOR_MS, () => void update($, isBlinking, () => false))
+  })
+}
 
 async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']> {
   const head = await $.process.run(['git', '-C', cwd, 'symbolic-ref', '--short', 'HEAD'], GIT_TIMEOUT)
@@ -236,16 +249,13 @@ async function compactNow($: EngineInterface) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const ran = await next(e)
+    startTimers($)
     void refresh($)
-    $.clock.every(30_000, () => void refresh($))
-    $.clock.every(BLINK_EVERY_MS, () => {
-      void update($, isBlinking, () => true)
-      $.clock.after(BLINK_FOR_MS, () => void update($, isBlinking, () => false))
-    })
     return ran
   })
 
   on('prompt.submit', async ($, e, next) => {
+    startTimers($)
     if (runner === null) {
       let ticks = 0
       const timer = $.clock.every(RUNNER_TICK_MS, () => {
@@ -259,6 +269,7 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    startTimers($)
     const ran = await next(e)
     runner?.cancel()
     runner = null
@@ -267,6 +278,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
+    startTimers($)
     const ran = await next(e)
     void refresh($)
     return ran
