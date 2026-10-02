@@ -43,6 +43,34 @@ const COMPACT_AT = 80
 const LEDGER_DAYS = 62
 // The pane with each day's cost and tokens, opened by /usage-history or the "30d" label
 const HISTORY_PANE = 'usage-history'
+// Buttons under the card, each sending a prompt as if typed; while Claude works it waits its turn
+const ACTIONS = [
+  {
+    key: 'push',
+    label: 'push',
+    hotkey: '1',
+    prompt: 'Commit any uncommitted changes with a clear message, then push the current branch.',
+  },
+  {
+    key: 'bugs',
+    label: 'find bugs',
+    hotkey: '2',
+    prompt:
+      'Review the uncommitted changes and the commits not yet pushed in this repo for bugs. Verify each one before reporting it, and list them before fixing anything.',
+  },
+  {
+    key: 'test',
+    label: 'run tests',
+    hotkey: '3',
+    prompt: "Run this project's tests, typecheck and linters, and report what fails.",
+  },
+  {
+    key: 'summary',
+    label: 'summarize',
+    hotkey: '4',
+    prompt: 'Summarize what we changed in this session in a few short lines.',
+  },
+]
 const HISTORY_BAR = 30
 const LEDGER_SESSIONS = 100
 // v2: the first ledger counted a resumed session's whole past cost as today's
@@ -205,6 +233,9 @@ async function recordCost($: EngineInterface, sessionId: string, usd: number, da
   if (delta <= 0) return ledger
 
   ledger.days[day] = (ledger.days[day] ?? 0) + delta
+  // Re-inserted so the session moves to the back and is not the first pruned while it still runs;
+  // pruned, a session started today would count all it spent again
+  delete ledger.sessions[sessionId]
   ledger.sessions[sessionId] = usd
   const days = Object.keys(ledger.days).sort()
   for (const old of days.slice(0, Math.max(0, days.length - LEDGER_DAYS))) delete ledger.days[old]
@@ -218,7 +249,10 @@ async function recordCost($: EngineInterface, sessionId: string, usd: number, da
 async function recordTokens($: EngineInterface, sessionId: string, day: string, tokens: number) {
   const ledger = ((await $.store.get(TOKEN_KEY)) as TokenLedger | undefined) ?? { days: {}, sessions: {} }
   ledger.days[day] = (ledger.days[day] ?? 0) + tokens
-  ledger.sessions[sessionId] = (ledger.sessions[sessionId] ?? 0) + tokens
+  // Re-inserted so a running session moves to the back and is not pruned first
+  const counted = (ledger.sessions[sessionId] ?? 0) + tokens
+  delete ledger.sessions[sessionId]
+  ledger.sessions[sessionId] = counted
   const days = Object.keys(ledger.days).sort()
   for (const old of days.slice(0, Math.max(0, days.length - LEDGER_DAYS))) delete ledger.days[old]
   const sessions = Object.keys(ledger.sessions)
@@ -299,8 +333,12 @@ async function localResetTime($: EngineInterface, iso: string, now: number) {
   const ms = Date.parse(iso)
   if (!Number.isFinite(ms)) return undefined
   const format = ms - now < 86_400_000 ? '+%-I:%M %p' : '+%a %-I:%M %p'
-  const { exitCode, stdout } = await $.process.run(['date', '-r', String(Math.floor(ms / 1000)), format])
-  return exitCode === 0 ? stdout.trim() : undefined
+  const epoch = String(Math.floor(ms / 1000))
+  // BSD date (macOS) takes the epoch with -r; GNU date (Linux) reads -r as a file and takes -d @epoch
+  const bsd = await $.process.run(['date', '-r', epoch, format])
+  if (bsd.exitCode === 0) return bsd.stdout.trim()
+  const gnu = await $.process.run(['date', '-d', `@${epoch}`, format])
+  return gnu.exitCode === 0 ? gnu.stdout.trim() : undefined
 }
 
 async function refresh($: EngineInterface) {
@@ -721,53 +759,69 @@ export const register: Register = (on, options) => {
     )
 
     return (
-      <Box paddingX={1} alignItems="center">
-        {clawd}
-        {/* The card's own edge columns are painted over below its first row, so the frame sits one in */}
-        <Box flexDirection="column" backgroundColor={config.card} paddingX={CARD_INSET}>
-          <Box>
-            <Text wrap="truncate">{draw(topLeft)}</Text>
-            {showFull && hasHistory && (
-              <Button key="history" plain dimColor label={historyLabel} onPress={() => void openHistory($)} />
-            )}
-            <Text wrap="truncate">{draw(topRight)}</Text>
-          </Box>
-          <Box width={total}>
-            {edge('l')}
-            <Box flexGrow={1} paddingX={2} paddingY={config.padRows} justifyContent="space-between">
-              <Box>
-                {stats.flatMap((st, i) => [
-                  ...(i === 0 ? [] : [<Text key={`div-${st.key}`} wrap="truncate">{draw([divider])}</Text>]),
-                  <Box key={`stat-${st.key}`}>
-                    <Text wrap="truncate">{draw(st.segs)}</Text>
-                    {st.card && (
-                      <Box
-                        position="absolute"
-                        top={1}
-                        left={0}
-                        display="none"
-                        hover={{ display: 'flex' }}
-                        backgroundColor={config.card}
-                      >
-                        <Text wrap="truncate">{draw(st.card)}</Text>
-                      </Box>
-                    )}
-                  </Box>,
-                ])}
-              </Box>
-              {ctxFull && !e.props.isWorking && (
-                <Button
-                  key="compact"
-                  label={compacting ? 'compacting…' : '🗜 compact'}
-                  hotkey="c"
-                  variant="primary"
-                  onPress={() => (compacting ? undefined : compactNow($))}
-                />
+      <Box paddingX={1} flexDirection="column">
+        <Box alignItems="center">
+          {clawd}
+          {/* The card's own edge columns are painted over below its first row, so the frame sits one in */}
+          <Box flexDirection="column" backgroundColor={config.card} paddingX={CARD_INSET}>
+            <Box>
+              <Text wrap="truncate">{draw(topLeft)}</Text>
+              {showFull && hasHistory && (
+                <Button key="history" plain dimColor label={historyLabel} onPress={() => void openHistory($)} />
               )}
+              <Text wrap="truncate">{draw(topRight)}</Text>
             </Box>
-            {edge('r')}
+            <Box width={total}>
+              {edge('l')}
+              <Box flexGrow={1} paddingX={2} paddingY={config.padRows} justifyContent="space-between">
+                <Box>
+                  {stats.flatMap((st, i) => [
+                    ...(i === 0 ? [] : [<Text key={`div-${st.key}`} wrap="truncate">{draw([divider])}</Text>]),
+                    <Box key={`stat-${st.key}`}>
+                      <Text wrap="truncate">{draw(st.segs)}</Text>
+                      {st.card && (
+                        <Box
+                          position="absolute"
+                          top={1}
+                          left={0}
+                          display="none"
+                          hover={{ display: 'flex' }}
+                          backgroundColor={config.card}
+                        >
+                          <Text wrap="truncate">{draw(st.card)}</Text>
+                        </Box>
+                      )}
+                    </Box>,
+                  ])}
+                </Box>
+                {ctxFull && !e.props.isWorking && (
+                  <Button
+                    key="compact"
+                    label={compacting ? 'compacting…' : '🗜 compact'}
+                    hotkey="c"
+                    variant="primary"
+                    onPress={() => (compacting ? undefined : compactNow($))}
+                  />
+                )}
+              </Box>
+              {edge('r')}
+            </Box>
+            <Text wrap="truncate">{draw(bottom)}</Text>
           </Box>
-          <Text wrap="truncate">{draw(bottom)}</Text>
+        </Box>
+        {/* Drawn plain, as the band's own dim text: "1: push · 2: find bugs · ..." */}
+        <Box marginLeft={CLAWD_WIDTH + CARD_INSET + 3}>
+          {ACTIONS.flatMap((action, i) => [
+            ...(i === 0 ? [] : [<Text key={`sep-${action.key}`} dimColor>{' · '}</Text>]),
+            <Button
+              key={`action-${action.key}`}
+              plain
+              dimColor
+              label={action.label}
+              hotkey={action.hotkey}
+              onPress={() => void $.prompt.submit({ text: action.prompt, asUser: true })}
+            />,
+          ])}
         </Box>
       </Box>
     )
