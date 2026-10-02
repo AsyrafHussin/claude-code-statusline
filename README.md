@@ -6,6 +6,10 @@ A clean, informative status line for [Claude Code](https://docs.anthropic.com/en
 
 ![Claude Code Status Line Preview](preview.png)
 
+Minimized, each card shrinks to one line:
+
+![Claude Code Status Line Preview, minimized](preview-minimized.png)
+
 ## What It Shows
 
 ### Line 1 - Project Info
