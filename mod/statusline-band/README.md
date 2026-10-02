@@ -1,6 +1,6 @@
 # statusline-band
 
-A panel above the Claude Code prompt, with Clawd, the Claude Code mascot, standing beside it.
+A panel above the Claude Code prompt, with Clawd, the Claude Code mascot, standing beside it, and a Spotify card under it with Beatbot, a Spotify mascot.
 
 - **Top edge:** the repo name, branch, and the model with its effort and your Claude plan (Max 5x, Pro...). On the right: the session's cost and tokens, then today's and the last 30 days'.
 - **Middle:** the 5-hour and 7-day rate limits as filling rings, with the reset countdown and the local reset time. `▲ out ~7h` appears when the pace would use a limit up before it resets. Then context usage as a bar.
@@ -44,19 +44,17 @@ Each is a row in `/config`, or run `/plugin configure statusline-band@claude-cod
 
 It runs these programs, never through a shell. The arguments are fixed except the folder (each `git` command runs in the repo's folder, `git -C <folder>`), for quick commit the commit message you approved, and for a searched track its Spotify URI (checked to be `spotify:track:` and letters and digits only).
 
-- **`git`, read-only, to show the branch and its changes.** It runs:
-  - `symbolic-ref --short HEAD` and `rev-parse --short HEAD` for the branch
-  - `rev-parse --show-toplevel` for the repo name
-  - `status --porcelain` and `diff --shortstat HEAD` for uncommitted files and lines
-  - `rev-list --left-right --count HEAD...@{upstream}` and `diff --shortstat @{upstream}...HEAD` for commits ahead and behind, and their lines
-  - `stash list` for stashes
+- **`git`, read-only, to show the branch and its changes** (each in the repo's folder, `git -C <folder>`). It runs:
+  - `rev-parse --show-toplevel` for the repo's root, once per folder
+  - `status --porcelain=v2 --branch --show-stash` for the branch, its upstream, commits ahead and behind, uncommitted files and stashes
+  - `diff --shortstat HEAD` and `diff --shortstat @{upstream}...HEAD` for the lines uncommitted and unpushed
   - `log -1 --format=%ct` for the time of the last commit
 
   These run every 30 seconds and after each tool call.
-- **`git`, when a git step of Claude's asks**, to say under the dialog what it takes with it: `status --porcelain` and `diff --shortstat HEAD` for a commit; `rev-parse --abbrev-ref @{upstream}`, `rev-list --count @{upstream}..HEAD` and `diff --shortstat @{upstream}...HEAD` for a push.
-- **`git`, when you press quick commit:** `status --porcelain`, `diff HEAD` and `log -5 --format=%s` to write the message; then, once you approve it, `add -A`, `commit -q -m <message>` and, if you chose it, `push`.
+- **`git`, when a git step of Claude's asks**, to say under the dialog what it takes with it: the same read-only commands, and `config --get alias.<name>` to see what a git alias in the command stands for.
+- **`git`, when you press quick commit:** `status --porcelain`, `diff HEAD` and `log -5 --format=%s` to write the message; then, once you approve it, `add -A`, `commit -q -m <message>` and, if you chose it, `push`. These are the only git commands it runs that change anything.
 - **`osascript`, for Spotify:** every 5 seconds, only while Spotify runs, to read the track; on a press of a control (play, pause, skip, shuffle, repeat, volume); and when you pick a searched track, to play it and bring the app you were in back to the front.
-- **`security find-generic-password -s statusline-band-spotify -w`, for search:** once per load, the first time you search, to read the Spotify client secret from your macOS Keychain when the setting is empty.
+- **`security find-generic-password -s statusline-band-spotify -w`, for search:** when you open or use the search and the setting is empty, to read the Spotify client secret from your macOS Keychain; once it is found, it is kept until the mod reloads.
 - **`date`, to read the local date and time** (`+%Y-%m-%d`, and `+%Y-%m-%d|%I:%M %p|%H|%M|%S`). It also formats a rate limit's reset moment in your timezone (`date -r <epoch>`).
 
 ### What it reads

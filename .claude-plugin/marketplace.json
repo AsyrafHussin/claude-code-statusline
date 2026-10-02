@@ -8,7 +8,7 @@
     {
       "name": "statusline-band",
       "source": "./mod/statusline-band",
-      "description": "A panel above the prompt with rate limits and their pace, context, cost and tokens, git status, and Clawd beside it"
+      "description": "A panel above the prompt with rate limits and their pace, context, cost and tokens, git status and switches, actions, and a Spotify card, with Clawd and Beatbot"
     }
   ]
 }
