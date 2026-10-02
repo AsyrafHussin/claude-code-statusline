@@ -121,6 +121,39 @@ cd claude-code-statusline
 | `2 behind` | Red | Remote has 2 commits you haven't pulled |
 | `unpushed` | Yellow | No remote tracking branch |
 
+## Mod: Panel Above the Prompt
+
+`mod/statusline-band` is a [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) that shows the same information as a panel above the prompt, with Clawd, the Claude Code mascot, beside it. It needs Claude Code v2.1.287 or later.
+
+```
+   ▐▛███▜▌    ╭─ ◆ claude-code-statusline ─  main ● +120 −34 ─ ✦ Opus 5.5 ──────────────╮
+  ▝▜ A H ▛▘   │  ◑ 47% 5h · 1h1m     ● 94% 7d · Sat 8:00 PM · 1d9h     ◔ 24% ctx 238k/1.0m ▁▂▃▄     $7.01 $12.09/h  │
+    ▘▘ ▝▝     ╰──────────────────────────────────────────────────────────────── 34m · 10:08 AM ─╯
+```
+
+| Part | Description |
+|------|-------------|
+| **Top edge** | Folder, branch, git status with lines added/removed, model |
+| **5h / 7d** | Rate limits as filling rings, with the reset countdown (and the weekly reset day and time) |
+| **ctx** | Context usage, tokens, and a trend over the last 12 turns |
+| **Cost** | Session cost and hourly rate, plus today's and this month's spend across sessions |
+| **Bottom edge** | Session duration and the time |
+| **Clawd** | Stands and blinks when idle, runs while Claude works; the border turns orange too |
+
+It also toasts once when a rate limit passes 80% and 95%, and shows a `compact` button when context passes 80%.
+
+To load it in every session, add its folder to the `env` block of `~/.claude/settings.json` (and remove `statusLine` if you no longer want the Bash version as well):
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-code-statusline/mod/statusline-band"
+  }
+}
+```
+
+Or try it for one session with `claude --plugin-dir ./mod/statusline-band`. To show your own initials on Clawd's shirt, change `SHIRT_TEXT` in `mod/statusline-band/hooks/register.tsx`.
+
 ## Customization
 
 Edit `~/.claude/statusline-command.sh` to customize colors, segments, or layout. The script receives a JSON payload from Claude Code via stdin with fields like:

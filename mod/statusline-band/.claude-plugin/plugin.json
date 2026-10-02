@@ -1,0 +1,7 @@
+{
+  "name": "statusline-band",
+  "version": "0.1.1",
+  "description": "Project, git, model and usage bars in a band above the prompt",
+  "author": { "name": "Asyraf Hussin" },
+  "types": "./types/index.d.ts"
+}
