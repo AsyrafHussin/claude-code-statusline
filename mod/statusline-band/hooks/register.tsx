@@ -17,6 +17,7 @@ const PACE_MIN_ELAPSED = 0.05
 const ALERT_THRESHOLDS = [80, 95]
 const COMPACT_AT = 80
 const LEDGER_DAYS = 62
+const ROLLING_DAYS = 30
 const LEDGER_SESSIONS = 100
 // v2: the first ledger counted a resumed session's whole past cost as today's
 const COST_KEY = 'costs-v2'
@@ -48,6 +49,10 @@ const CLAWD_WIDTH = 11
 // Room left for the band's own collapse mark ([-]) on the right, with a margin
 const ENGINE_MARK_WIDTH = 8
 const RUNNER_TICK_MS = 120
+// Empty rows above and below the stats, so the panel has room to breathe
+const PAD_ROWS = 1
+// Columns of card left and right of the frame
+const CARD_INSET = 1
 const RUNNER_MAX_TICKS = 15_000
 
 const COLORS = {
@@ -59,6 +64,8 @@ const COLORS = {
   model: '#7dd3fc',
   border: '#71717a',
   borderBusy: '#d97757',
+  // The card behind the panel, a touch off pure black
+  card: '#0a0a0a',
 }
 
 const toneHex = (pct: number) => (pct >= 80 ? COLORS.hot : pct >= 50 ? COLORS.warn : COLORS.ok)
@@ -249,7 +256,8 @@ async function refresh($: EngineInterface) {
     const midnight = now - ((Number(hh) * 60 + Number(mm)) * 60 + Number(ss)) * 1000
     const costUsd = usage.cost?.usd ?? null
     const ledger = costUsd !== null ? await recordCost($, sessionId, costUsd, day, usage.startedAt >= midnight) : null
-    const month = day.slice(0, 7)
+    // The ledger's days are local dates, so stepping back on a UTC calendar keeps them aligned
+    const since = new Date(Date.parse(`${day}T00:00:00Z`) - (ROLLING_DAYS - 1) * 86_400_000).toISOString().slice(0, 10)
     const limits = await Promise.all(
       usage.rateLimits.map(async (l): Promise<Limit> => ({
         kind: l.kind,
@@ -271,8 +279,8 @@ async function refresh($: EngineInterface) {
         ctx.percent !== undefined ? { percent: ctx.percent, tokens: ctx.tokens ?? 0, window: ctx.window } : null,
       costUsd,
       todayUsd: ledger?.days[day] ?? null,
-      monthUsd: ledger
-        ? Object.entries(ledger.days).reduce((sum, [d, usd]) => (d.startsWith(month) ? sum + usd : sum), 0)
+      rollingUsd: ledger
+        ? Object.entries(ledger.days).reduce((sum, [d, usd]) => (d >= since && d <= day ? sum + usd : sum), 0)
         : null,
       limits,
     }
@@ -349,7 +357,7 @@ export const register: Register = on => {
 
     const border = e.props.isWorking ? COLORS.borderBusy : COLORS.border
     const line = (text: string): Seg => ({ text, color: border })
-    const total = Math.max(40, e.props.bodyColumns - 2 - CLAWD_WIDTH - ENGINE_MARK_WIDTH)
+    const total = Math.max(40, e.props.bodyColumns - 2 - CLAWD_WIDTH - ENGINE_MARK_WIDTH - CARD_INSET * 2)
 
     // Top edge: the project as the panel's title
     const g = s.git
@@ -393,19 +401,17 @@ export const register: Register = on => {
       { text: `✦ ${s.model}`, color: COLORS.model },
       { text: ' ' },
     ]
-    // Top right: what the session, today and this month have cost
+    // Top right: what the session, today and the last 30 days have cost
     const hours = (s.now - s.startedAt) / 3_600_000
     const cost: Seg[] = []
     if (s.costUsd !== null) {
       cost.push({ text: ' ' }, { text: formatUsd(s.costUsd), color: COLORS.ok, bold: true }, { text: ' session', dim: true })
       if (hours > 0.05) cost.push({ text: ` ${formatUsd(s.costUsd / hours)}/h`, dim: true })
-      const extras: [number | null, string][] = [[s.todayUsd, 'today'], [s.monthUsd, 'mo']]
-      let shown = s.costUsd
-      for (const [usd, label] of extras) {
-        if (usd === null || usd - shown < 0.01) continue
+      const addTotal = (usd: number, label: string) =>
         cost.push({ text: ' · ', dim: true }, { text: formatUsd(usd), color: COLORS.ok }, { text: ` ${label}`, dim: true })
-        shown = usd
-      }
+      // Today only when it adds to the session; the 30 days always, even while it matches today
+      if (s.todayUsd !== null && s.todayUsd - s.costUsd >= 0.01) addTotal(s.todayUsd, 'today')
+      if (s.rollingUsd !== null) addTotal(s.rollingUsd, `${ROLLING_DAYS}d`)
       cost.push({ text: ' ' })
     }
     // When the whole line does not fit beside the title, the session cost alone still shows
@@ -490,21 +496,30 @@ export const register: Register = on => {
     ]
 
     // Drop the last blocks first when the terminal is too narrow for one row
-    const divider: Seg = { text: '  │  ', color: border }
-    const room = total - 6
+    const divider: Seg = { text: '   │   ', color: border }
+    const room = total - 8
     while (stats.length > 1 && stats.reduce((n, st) => n + width(st) + width([divider]), 0) > room) stats.pop()
     const row = stats.flatMap((st, i) => (i === 0 ? st : [divider, ...st]))
 
     const ctxFull = s.context !== null && s.context.percent >= COMPACT_AT
+    // A side of the frame, one "│" per row of the stats and their padding
+    const edge = (side: string) => (
+      <Box flexDirection="column">
+        {Array.from({ length: PAD_ROWS * 2 + 1 }, (_, i) => (
+          <Text key={`${side}${i}`} wrap="truncate">{draw([line('│')])}</Text>
+        ))}
+      </Box>
+    )
 
     return (
-      <Box paddingX={1} alignItems="flex-end">
+      <Box paddingX={1} alignItems="center">
         {clawd}
-        <Box flexDirection="column">
+        {/* The card's own edge columns are painted over below its first row, so the frame sits one in */}
+        <Box flexDirection="column" backgroundColor={COLORS.card} paddingX={CARD_INSET}>
           <Text wrap="truncate">{draw(top)}</Text>
           <Box width={total}>
-            <Text color={border}>│</Text>
-            <Box flexGrow={1} justifyContent="space-between" paddingX={2}>
+            {edge('l')}
+            <Box flexGrow={1} paddingX={2} paddingY={PAD_ROWS} justifyContent="space-between">
               <Text wrap="truncate">{draw(row)}</Text>
               {ctxFull && !e.props.isWorking && (
                 <Button
@@ -516,7 +531,7 @@ export const register: Register = on => {
                 />
               )}
             </Box>
-            <Text color={border}>│</Text>
+            {edge('r')}
           </Box>
           <Text wrap="truncate">{draw(bottom)}</Text>
         </Box>

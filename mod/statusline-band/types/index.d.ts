@@ -27,7 +27,8 @@ export type Snapshot = {
   context: { percent: number; tokens: number; window: number } | null
   costUsd: number | null
   todayUsd: number | null
-  monthUsd: number | null
+  // Spend over the last 30 days, today included
+  rollingUsd: number | null
   limits: Limit[]
 }
 
