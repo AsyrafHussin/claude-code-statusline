@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   aliasSteps,
+  basicAuth,
   CLEAR,
   barCells,
   cleanCommitMessage,
@@ -20,6 +21,8 @@ import {
   parseSpotify,
   pixelsToCells,
   readBmp,
+  safeTrackUri,
+  parseSearch,
   parseShortstat,
   parseStatusV2,
   placeFolder,
@@ -131,6 +134,8 @@ describe('settings', () => {
       gitStrict: true,
       spotify: true,
       plan: '',
+      spotifyClientId: '',
+      spotifyClientSecret: '',
     })
     expect(readConfig({ initials: 'AH', cardColor: '#000000' })).toMatchObject({ initials: 'AH', card: '#000000' })
   })
@@ -443,6 +448,36 @@ describe('plan', () => {
     expect(planLabel(config('something_else', ''))).toBe(null)
     expect(planLabel('{}')).toBe(null)
     expect(planLabel('not json')).toBe(null)
+  })
+})
+
+describe('spotify search', () => {
+  test('builds the client credentials header', () => {
+    expect(basicAuth('abc', 'xyz')).toBe('Basic YWJjOnh5eg==')
+  })
+
+  test('reads the tracks a search found, skipping anything malformed', () => {
+    const body = JSON.stringify({
+      tracks: {
+        items: [
+          { uri: 'spotify:track:1', name: 'Kerosene', duration_ms: 205000, artists: [{ name: 'The Warning' }], album: { name: 'Everything’s Falling' } },
+          { uri: 'spotify:track:2', name: 'Duet', duration_ms: 1000, artists: [{ name: 'A' }, { name: 'B' }], album: {} },
+          { name: 'no uri' },
+          null,
+        ],
+      },
+    })
+    expect(parseSearch(body)).toEqual([
+      { uri: 'spotify:track:1', name: 'Kerosene', artist: 'The Warning', album: 'Everything’s Falling', durationMs: 205000 },
+      { uri: 'spotify:track:2', name: 'Duet', artist: 'A, B', album: '', durationMs: 1000 },
+    ])
+    expect(parseSearch('{"error":{"status":401}}')).toBe(null)
+    expect(parseSearch('nope')).toBe(null)
+  })
+
+  test('only a plain track URI goes into AppleScript', () => {
+    expect(safeTrackUri('spotify:track:4uLU6hMCjMI75M1A2tKUQC')).toBe('spotify:track:4uLU6hMCjMI75M1A2tKUQC')
+    expect(safeTrackUri('spotify:track:x" & do shell script "rm')).toBe(null)
   })
 })
 

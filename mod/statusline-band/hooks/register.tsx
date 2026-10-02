@@ -18,6 +18,9 @@ import {
   parsePlainGit,
   parseShortstat,
   addPlayed,
+  basicAuth,
+  parseSearch,
+  safeTrackUri,
   parseSpotify,
   parseStatusV2,
   placeFolder,
@@ -28,11 +31,11 @@ import {
   shiftDay,
   sumDays,
 } from './logic'
-import type { GitStep, PlayedTrack } from './logic'
-import { drawHistoryPane, historyText } from './pane'
+import type { FoundTrack, GitStep, PlayedTrack } from './logic'
+import { drawHistoryPane, drawSearchPane, historyText } from './pane'
 import { GIT_TIMEOUT, LIMIT_LABELS, REVIEW, runtime } from './state'
 import type { GitAuto } from './state'
-import type { CostLedger, Limit, Mood, PaceLog, Snapshot, TokenLedger } from '../types'
+import type { CostLedger, Limit, Mood, PaceLog, Snapshot, SpotifySearch, TokenLedger } from '../types'
 
 // ── State values the band draws from
 
@@ -46,10 +49,13 @@ const mood = atom({ plugin: 'statusline-band', key: 'mood' } as const, 'idle')
 const moodTick = atom({ plugin: 'statusline-band', key: 'moodTick' } as const, 0)
 const music = atom({ plugin: 'statusline-band', key: 'music' } as const, null)
 const danceTick = atom({ plugin: 'statusline-band', key: 'danceTick' } as const, 0)
+const search = atom({ plugin: 'statusline-band', key: 'search' } as const, { query: '', status: 'idle', message: '', tracks: [] })
 
 // The pane with each day's cost and tokens, opened by /usage-history or the window's label on the band;
 // a literal, so the engine's scan can read the hooks' matchers
 const HISTORY_PANE = 'usage-history'
+// The Spotify search dialog, opened by the search button or /spotify-search
+const SEARCH_PANE = 'spotify-search'
 
 // ── Actions under the card
 
@@ -525,7 +531,7 @@ async function stepDance($: EngineInterface) {
 }
 
 // The controls under the band, each one AppleScript line to Spotify; then the state is read again at once
-const SPOTIFY_COMMANDS: Record<MusicCommand, string> = {
+const SPOTIFY_COMMANDS: Record<Exclude<MusicCommand, 'search'>, string> = {
   playpause: 'playpause',
   next: 'next track',
   previous: 'previous track',
@@ -537,8 +543,84 @@ const SPOTIFY_COMMANDS: Record<MusicCommand, string> = {
 }
 
 async function controlSpotify($: EngineInterface, command: MusicCommand) {
+  if (command === 'search') {
+    await openSearch($)
+    return
+  }
   const line = SPOTIFY_COMMANDS[command]
   await $.process.run(['osascript', '-e', `tell application "Spotify" to ${line}`], { timeoutMs: 4000 }).catch(() => null)
+  await readSpotify($)
+}
+
+// ── Spotify search: the Web API with the app's own credentials (no user sign-in), up to 10 tracks, played
+// in the Spotify app through AppleScript
+
+const SEARCH_LIMIT = 10
+// The app token, kept until a minute before it expires
+let spotifyToken: { value: string; until: number } | null = null
+
+async function readSpotifyToken($: EngineInterface) {
+  const now = await $.clock.now()
+  if (spotifyToken && now < spotifyToken.until) return spotifyToken.value
+  const { spotifyClientId: id, spotifyClientSecret: secret } = runtime.config
+  const got = await $.http
+    .fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { Authorization: basicAuth(id, secret), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'grant_type=client_credentials',
+    })
+    .catch(() => null)
+  if (!got?.ok) return null
+  const body = JSON.parse(got.text) as { access_token?: string; expires_in?: number }
+  if (!body.access_token) return null
+  spotifyToken = { value: body.access_token, until: now + ((body.expires_in ?? 3600) - 60) * 1000 }
+  return spotifyToken.value
+}
+
+async function openSearch($: EngineInterface) {
+  const { spotifyClientId: id, spotifyClientSecret: secret } = runtime.config
+  if (!id || !secret) {
+    await update($, search, (): SpotifySearch => ({
+      query: '',
+      status: 'failed',
+      message: 'Set spotifyClientId and spotifyClientSecret in /config first (an app at developer.spotify.com/dashboard).',
+      tracks: [],
+    }))
+  }
+  await $.ui.open({ id: SEARCH_PANE, title: 'Search Spotify', focus: true, closeOnEscape: true, holdToasts: true, rows: 16 })
+}
+
+async function searchSpotify($: EngineInterface, query: string) {
+  const text = query.trim()
+  if (!text) return
+  await update($, search, (): SpotifySearch => ({ query: text, status: 'searching', message: '', tracks: [] }))
+  const token = await readSpotifyToken($)
+  if (token === null) {
+    await update($, search, (): SpotifySearch => ({
+      query: text,
+      status: 'failed',
+      message: 'Spotify would not give a token: check spotifyClientId and spotifyClientSecret in /config.',
+      tracks: [],
+    }))
+    return
+  }
+  const url = `https://api.spotify.com/v1/search?type=track&limit=${SEARCH_LIMIT}&q=${encodeURIComponent(text)}`
+  const got = await $.http.fetch(url, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null)
+  const tracks = got?.ok ? parseSearch(got.text) : null
+  await update($, search, (): SpotifySearch =>
+    tracks === null
+      ? { query: text, status: 'failed', message: `The search failed${got ? ` (${got.status})` : ''}.`, tracks: [] }
+      : { query: text, status: 'found', message: '', tracks },
+  )
+}
+
+// Plays a found track in the Spotify app (launching it if it is not running: the person asked), then
+// closes the dialog and reads the new state
+async function playFound($: EngineInterface, track: FoundTrack) {
+  const uri = safeTrackUri(track.uri)
+  if (uri === null) return
+  await $.process.run(['osascript', '-e', `tell application "Spotify" to play track "${uri}"`], { timeoutMs: 8000 }).catch(() => null)
+  await $.ui.close({ id: SEARCH_PANE })
   await readSpotify($)
 }
 
@@ -671,6 +753,9 @@ export const register: Register = (on, options) => {
     const ran = await next(e)
     startTimers($)
     void refresh($)
+    if (runtime.config.spotify) {
+      await $.command.register({ name: SEARCH_PANE, description: 'Search Spotify and play a track' })
+    }
     await $.command.register({
       name: HISTORY_PANE,
       description: `Show cost and tokens for each of the last ${runtime.config.rollingDays} days`,
@@ -815,6 +900,21 @@ export const register: Register = (on, options) => {
         void $.ui
           .copy({ text: historyText(days, span) })
           .then(copied => $.ui.toast(copied.isCopied ? '✓  Copied' : 'Could not copy')),
+    })
+  })
+
+  on('command.run', { command: SEARCH_PANE }, async $ => {
+    await openSearch($)
+    return { text: 'Spotify search opened.' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: SEARCH_PANE }, async ($, e) => {
+    const state = await read($, search)
+    return drawSearchPane($.ui.resolve(e), {
+      ...state,
+      rows: e.viewport?.rows ?? 16,
+      onSearch: query => void searchSpotify($, query),
+      onPlay: track => void playFound($, track),
     })
   })
 

@@ -24,7 +24,7 @@ import type { Config, GitAuto } from './state'
 import type { Limit, Mood, Music, Snapshot, TurnTokens } from '../types'
 
 // The elements the band draws with, as $.ui.resolve gives them; Raster only on the terminal
-export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & Partial<Pick<Elements['terminal'], 'Raster' | 'Image'>>
+export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & Partial<Pick<Elements['terminal'], 'Raster' | 'Image' | 'Input'>>
 
 const SPOTIFY_GREEN = '#1db954'
 // Encode each pose once; rendering only selects a frame from the shared animation beat.
@@ -40,7 +40,7 @@ const LOGO_CELLS = logoCells(STANDING)
 const DANCE_CELLS = DANCE_FRAMES.map(logoCells)
 const BLINK_CELLS = logoCells(BLINK_FRAME)
 
-export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open'
+export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open' | 'search'
 
 // A button under the card: most send a prompt as if typed; one with no prompt runs itself (quick commit)
 export type Action = { key: string; label: string; hotkey: string; prompt?: string }
@@ -410,7 +410,8 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
 
     // Inside: the controls, progress and the time, then shuffle, repeat and volume on the right
     const toggles = `shuffle · repeat · vol − ${m.volume}% +`
-    const cells = Math.max(10, cardWidth - 2 - 4 - 14 - (time.length + 2) - toggles.length - 4)
+    // The controls take ◀◀ ❚❚ ▶▶ and "search", 23 columns with their gaps
+    const cells = Math.max(10, cardWidth - 2 - 4 - 23 - (time.length + 2) - toggles.length - 4)
     const filled = m.durationMs > 0 ? Math.min(cells, Math.round((m.positionMs / m.durationMs) * cells)) : 0
     const toggle = (key: MusicCommand, label: string, isOn: boolean) => (
       <Button key={`music-${key}`} plain dimColor={!isOn} label={label} onPress={() => view.onMusic(key)} />
@@ -438,6 +439,8 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
                 <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶ '} onPress={() => view.onMusic('playpause')} />
                 <Text>{'  '}</Text>
                 <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next')} />
+                <Text>{'   '}</Text>
+                <Button key="music-search" plain dimColor label="search" onPress={() => view.onMusic('search')} />
                 <Text>{'    '}</Text>
                 <Text wrap="truncate">
                   <Text color={SPOTIFY_GREEN}>{'━'.repeat(filled)}</Text>

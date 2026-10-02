@@ -9,7 +9,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // What each person sets for themselves in /config, the manifest's userConfig, with out-of-range numbers clamped
-export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, noAttribution: false, gitStrict: true, spotify: true, plan: '' }
+export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, noAttribution: false, gitStrict: true, spotify: true, plan: '', spotifyClientId: '', spotifyClientSecret: '' }
 
 export const readConfig = (options: PluginOptions) => {
   const text = (key: string, fallback: string) => (typeof options[key] === 'string' ? (options[key] as string) : fallback)
@@ -24,6 +24,8 @@ export const readConfig = (options: PluginOptions) => {
     gitStrict: typeof options.gitStrict === 'boolean' ? options.gitStrict : DEFAULTS.gitStrict,
     spotify: typeof options.spotify === 'boolean' ? options.spotify : DEFAULTS.spotify,
     plan: text('plan', DEFAULTS.plan).trim(),
+    spotifyClientId: text('spotifyClientId', DEFAULTS.spotifyClientId).trim(),
+    spotifyClientSecret: text('spotifyClientSecret', DEFAULTS.spotifyClientSecret).trim(),
   }
 }
 
@@ -543,3 +545,52 @@ export const planLabel = (configText: string): string | null => {
   const names: Record<string, string> = { claude_pro: 'Pro', claude_team: 'Team', claude_enterprise: 'Enterprise' }
   return names[type] ?? null
 }
+
+// ── Spotify search, through the Web API with an app's own credentials (no user sign-in)
+
+// UTF-8 bytes of a string, without TextEncoder
+const utf8 = (text: string) => {
+  const bytes: number[] = []
+  for (const ch of unescape(encodeURIComponent(text))) bytes.push(ch.charCodeAt(0))
+  return new Uint8Array(bytes)
+}
+
+// The Authorization header that trades an app's client id and secret for a token
+export const basicAuth = (id: string, secret: string) => `Basic ${toBase64(utf8(`${id}:${secret}`))}`
+
+// A track the search found
+export type FoundTrack = { uri: string; name: string; artist: string; album: string; durationMs: number }
+
+// The tracks in a search response, or null when the response is not one
+export const parseSearch = (text: string): FoundTrack[] | null => {
+  let body: { tracks?: { items?: unknown[] } }
+  try {
+    body = JSON.parse(text) as typeof body
+  } catch {
+    return null
+  }
+  const items = body.tracks?.items
+  if (!Array.isArray(items)) return null
+  const tracks: FoundTrack[] = []
+  for (const item of items) {
+    const t = item as {
+      uri?: unknown
+      name?: unknown
+      duration_ms?: unknown
+      artists?: { name?: unknown }[]
+      album?: { name?: unknown }
+    } | null
+    if (!t || typeof t.uri !== 'string' || typeof t.name !== 'string') continue
+    tracks.push({
+      uri: t.uri,
+      name: t.name,
+      artist: (t.artists ?? []).map(a => (typeof a?.name === 'string' ? a.name : '')).filter(Boolean).join(', '),
+      album: typeof t.album?.name === 'string' ? t.album.name : '',
+      durationMs: typeof t.duration_ms === 'number' ? t.duration_ms : 0,
+    })
+  }
+  return tracks
+}
+
+// A Spotify track URI that is safe to put inside an AppleScript string, or null
+export const safeTrackUri = (uri: string) => (/^spotify:track:[A-Za-z0-9]+$/.test(uri) ? uri : null)

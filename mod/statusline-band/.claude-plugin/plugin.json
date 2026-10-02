@@ -64,6 +64,19 @@
       "title": "Plan",
       "description": "Your Claude plan as the band shows it, such as Max 20x; empty reads it from Claude Code's own config",
       "default": ""
+    },
+    "spotifyClientId": {
+      "type": "string",
+      "title": "Spotify client ID",
+      "description": "From your app at developer.spotify.com/dashboard, for searching Spotify from the band",
+      "default": ""
+    },
+    "spotifyClientSecret": {
+      "type": "string",
+      "title": "Spotify client secret",
+      "description": "From the same app; kept in secure storage",
+      "default": "",
+      "sensitive": true
     }
   }
 }
