@@ -421,12 +421,14 @@ async function refresh($: EngineInterface) {
       rollingUsd: ledger ? sumDays(ledger.days, since, day) : null,
       limits,
       agents: agents.filter(a => a.status === 'running').length,
-      gitAuto: repo?.root ? await readGitAuto($, repo.root) : null,
+      gitAuto: null,
     }
     // Commits that were waiting to go out and are now pushed: Clawd cheers
     const before = await read($, snap)
     if ((before?.git?.ahead ?? 0) > 0 && repo !== null && repo.hasUpstream && repo.ahead === 0) cheerUntil = now + CHEER_MS
-    await update($, snap, () => next)
+    // The switches are read last, so one flipped while this refresh ran is not drawn back
+    const gitAuto = repo?.root ? await readGitAuto($, repo.root) : null
+    await update($, snap, () => ({ ...next, gitAuto }))
     await alertLimits($, limits, now)
   } finally {
     isRefreshing = false
@@ -543,6 +545,14 @@ export const register: Register = (on, options) => {
   on('classic.PreToolUse', { tool: 'Bash' }, async ($, e, next) => {
     const parsed = parseGitCommand(e.command)
     if (parsed.steps.length === 0) return next(e)
+    // Everything beneath runs first, your own settings hooks among them, and its ask or deny stands
+    const below = await next(e)
+    if (below.ask !== undefined || below.deny !== undefined) return below
+    // What else it answered (a rewrite, notes for the model) rides along with the switches' word
+    const kept = {
+      ...(below.updatedInput && { updatedInput: below.updatedInput }),
+      ...(below.additionalContext && { additionalContext: below.additionalContext }),
+    }
     const cwd = await $.session.cwd()
     // The folder the command names, when it can be told: ~ expanded, a $variable cannot be
     const home = (await $.env.get('HOME')) ?? ''
@@ -550,21 +560,21 @@ export const register: Register = (on, options) => {
     const isUnknown = named !== undefined && named.includes('$')
     const dir = named === undefined || isUnknown ? cwd : named.startsWith('/') ? named : `${cwd}/${named}`
     const root = (await repoRoot($, dir)) ?? (isUnknown ? await repoRoot($, cwd) : null)
-    if (root === null) return isUnknown ? { ask: 'Confirm this git step: the band could not tell which repo it is in.' } : next(e)
+    if (root === null) return isUnknown ? { ...kept, ask: 'Confirm this git step: the band could not tell which repo it is in.' } : below
     // A repo the command names but the band cannot be sure of is held to ask
     const auto = isUnknown ? REVIEW : await readGitAuto($, root)
     const decision = gitDecision(parsed, auto)
-    if (decision === 'allow') return { allow: true }
+    if (decision === 'allow') return { ...kept, allow: true }
     if (decision === 'ask') {
       const name = root.split('/').filter(Boolean).pop() ?? root
-      if (isUnknown) return { ask: `Confirm this git step: the band could not be sure it is in ${name}.` }
+      if (isUnknown) return { ...kept, ask: `Confirm this git step: the band could not be sure it is in ${name}.` }
       const held = parsed.steps.filter(step => !auto[step])
-      if (held.length === 0) return { ask: `${name}: a force push always asks, even with "push" on auto.` }
+      if (held.length === 0) return { ...kept, ask: `${name}: a force push always asks, even with "push" on auto.` }
       const doing = held.map(step => (step === 'push' ? 'pushing' : 'committing')).join(' and ')
       const switches = held.map(step => `"${step}"`).join(' and ')
-      return { ask: `${name} asks before ${doing}. Switch ${switches} to auto in the band to skip this.` }
+      return { ...kept, ask: `${name} asks before ${doing}. Switch ${switches} to auto in the band to skip this.` }
     }
-    return next(e)
+    return below
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

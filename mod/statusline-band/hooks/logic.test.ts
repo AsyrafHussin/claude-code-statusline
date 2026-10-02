@@ -176,10 +176,11 @@ describe('git ticks', () => {
   })
 
   test('a force push always asks, even on auto', () => {
-    for (const command of ['git push --force', 'git push -f origin main', 'git push --force-with-lease', 'git push origin +main']) {
+    for (const command of ['git push --force', 'git push -f origin main', 'git push -uf origin main', 'git push -fu', 'git push --force-with-lease', 'git push origin +main']) {
       expect(gitDecision(parseGitCommand(command), all)).toBe('ask')
     }
     expect(parseGitCommand('git push origin main').isForcePush).toBe(false)
+    expect(parseGitCommand('git push -u origin main').isForcePush).toBe(false)
     expect(parseGitCommand('git commit -m "use -f flag" && git push').isForcePush).toBe(false)
   })
 })

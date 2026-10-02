@@ -104,8 +104,9 @@ export type GitCommand = { steps: GitStep[]; isOnlyGit: boolean; isForcePush: bo
 const GIT_OPTIONS = String.raw`(?:\s+(?:-C\s+(?:"[^"]+"|'[^']+'|\S+)|-c\s+\S+|--?[A-Za-z][\w-]*(?:=\S+)?))*`
 const GIT_STEP = new RegExp(String.raw`\bgit\b(${GIT_OPTIONS})\s+(add|commit|push)\b([^\n;&|]*)`, 'g')
 const GIT_DIR = /-C\s+("[^"]+"|'[^']+'|\S+)/
-// A push that rewrites the remote's history: --force, -f, --force-with-lease, or a "+branch" refspec
-const FORCE = /(?:^|\s)(?:--force(?:-with-lease)?(?:=\S*)?|-f|\+\S+)(?=\s|$)/
+// A push that rewrites the remote's history: --force, --force-with-lease, -f alone or among other
+// short flags (-uf, -fu), or a "+branch" refspec
+const FORCE = /(?:^|\s)(?:--force(?:-with-lease)?(?:=\S*)?|-[A-Za-z]*f[A-Za-z]*|\+\S+)(?=\s|$)/
 // A heredoc's body is the commit message, not commands: "<<'EOF' ... EOF"
 const HEREDOC = /<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g
 const PLAIN_SEGMENT = new RegExp(
