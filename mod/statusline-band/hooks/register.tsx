@@ -51,6 +51,8 @@ const moodTick = atom({ plugin: 'statusline-band', key: 'moodTick' } as const, 0
 const music = atom({ plugin: 'statusline-band', key: 'music' } as const, null)
 const danceTick = atom({ plugin: 'statusline-band', key: 'danceTick' } as const, 0)
 const musicCompact = atom({ plugin: 'statusline-band', key: 'musicCompact' } as const, false)
+// The Spotify switch on the band: off until turned on, and nothing is asked of Spotify while it is off
+const musicOn = atom({ plugin: 'statusline-band', key: 'musicOn' } as const, false)
 const cardCompact = atom({ plugin: 'statusline-band', key: 'cardCompact' } as const, false)
 const search = atom({ plugin: 'statusline-band', key: 'search' } as const, { query: '', status: 'idle', message: '', tracks: [] })
 
@@ -478,7 +480,10 @@ function startTimers($: EngineInterface) {
   void $.store.get(CARD_COMPACT_KEY).then(kept => update($, cardCompact, () => kept === true))
   $.clock.every(MOOD_TICK_MS, () => void tickMood($))
   if (runtime.config.spotify) {
-    void readSpotify($)
+    void $.store.get(MUSIC_ON_KEY).then(async kept => {
+      await update($, musicOn, () => kept === true)
+      await readSpotify($)
+    })
     $.clock.every(SPOTIFY_EVERY_MS, () => void readSpotify($))
     void $.store.get(COMPACT_KEY).then(kept => update($, musicCompact, () => kept === true))
     // Beatbot's dance: a step each tick, only while a track plays
@@ -495,6 +500,7 @@ function startTimers($: EngineInterface) {
 const SPOTIFY_EVERY_MS = 5_000
 const DANCE_EVERY_MS = 250
 const COMPACT_KEY = 'spotify-compact-v1'
+const MUSIC_ON_KEY = 'spotify-on-v1'
 const CARD_COMPACT_KEY = 'card-compact-v1'
 // Asks only while Spotify runs ("is running" never launches it); fields joined by the unit separator
 const SPOTIFY_SCRIPT = `if application "Spotify" is running then
@@ -513,6 +519,10 @@ const RECENT_KEY = 'spotify-recent-v1'
 const RECENT_SHOWN = 3
 
 async function readSpotify($: EngineInterface) {
+  if (!(await read($, musicOn))) {
+    if ((await read($, music)) !== null) await update($, music, () => null)
+    return
+  }
   const ran = await $.process.run(['osascript', '-e', SPOTIFY_SCRIPT], { timeoutMs: 4000 }).catch(() => null)
   const playing = ran?.exitCode === 0 ? parseSpotify(ran.stdout) : null
   const before = await read($, music)
@@ -685,6 +695,14 @@ async function playFound($: EngineInterface, track: FoundTrack) {
     )
     .catch(() => null)
   await $.ui.close({ id: SEARCH_PANE })
+  await readSpotify($)
+}
+
+// Turns the Spotify card on or off, kept across sessions; off clears it at once
+async function toggleMusic($: EngineInterface) {
+  const isOn = !(await read($, musicOn))
+  await update($, musicOn, () => isOn)
+  await $.store.set(MUSIC_ON_KEY, isOn)
   await readSpotify($)
 }
 
@@ -1006,8 +1024,10 @@ export const register: Register = (on, options) => {
       danceTick: await read($, danceTick),
       tick: isWorking ? await read($, frame) : null,
       isBlinking: await read($, isBlinking),
-      music: runtime.config.spotify ? await read($, music) : null,
+      music: runtime.config.spotify && (await read($, musicOn)) ? await read($, music) : null,
       isMusicCompact: await read($, musicCompact),
+      isMusicOn: runtime.config.spotify ? await read($, musicOn) : null,
+      onMusicSwitch: () => void toggleMusic($),
       isCardCompact: await read($, cardCompact),
       onCardCompact: () => void toggleCardCompact($),
       canDrawArt: e.surface === 'terminal',

@@ -93,6 +93,9 @@ export type BandView = {
   music: Music | null
   // The Spotify card shrunk to one line
   isMusicCompact: boolean
+  // The Spotify switch beside the repo's: on or off, null when the setting is off and there is no switch
+  isMusicOn: boolean | null
+  onMusicSwitch: () => void
   // The main card shrunk to one line, and the button that flips it
   isCardCompact: boolean
   onCardCompact: () => void
@@ -643,11 +646,17 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
             </Box>
           ))}
         </Box>
-        {/* The repo's state, as words: "commit auto · push ask"; the label toggles, the word says which */}
-        {gitAuto && (
+        {/* The switches, as words: "spotify off · commit auto · push ask"; the label toggles, the word says which */}
+        {(gitAuto || view.isMusicOn !== null) && (
           <Box flexShrink={0}>
-            {(['commit', 'push'] as const).flatMap((step, i) => [
-              ...(i === 0 ? [] : [<Text key={`switch-sep-${step}`} dimColor>{' · '}</Text>]),
+            {view.isMusicOn !== null && [
+              <Button key="switch-spotify" plain dimColor label="spotify" onPress={view.onMusicSwitch} />,
+              <Text key="switch-state-spotify" color={view.isMusicOn ? COLORS.ok : undefined} dimColor={!view.isMusicOn}>
+                {view.isMusicOn ? ' on' : ' off'}
+              </Text>,
+            ]}
+            {gitAuto && (['commit', 'push'] as const).flatMap((step, i) => [
+              ...(i === 0 && view.isMusicOn === null ? [] : [<Text key={`switch-sep-${step}`} dimColor>{' · '}</Text>]),
               <Button key={`switch-${step}`} plain dimColor label={step} onPress={() => view.onSwitch(step)} />,
               <Text key={`switch-state-${step}`} color={gitAuto[step] ? COLORS.ok : COLORS.warn}>
                 {gitAuto[step] ? ' auto' : ' ask'}
