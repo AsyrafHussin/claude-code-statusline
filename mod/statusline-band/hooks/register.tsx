@@ -685,6 +685,13 @@ export const register: Register = (on, options) => {
     const decision = gitDecision(plain, steps, auto, runtime.permissionMode)
     if (decision === 'pass') return below
     if (decision === 'allow') return { ...kept, allow: true }
+    // With gitStrict off, the person trusts their own repo: a shape that is not plain (or does not name its
+    // repo) asks only when a switch of the session's repo, or the repo it names, says ask
+    if (!runtime.config.gitStrict) {
+      const trusted = root ?? (await repoRoot($, cwd))
+      const trustedAuto = trusted !== null ? await readGitAuto($, trusted) : REVIEW
+      if (steps.every(step => trustedAuto[step])) return below
+    }
     // Under the dialog: what this step takes with it, in the repo it names or the session's
     const shownRoot = root ?? (await repoRoot($, cwd))
     if (shownRoot !== null) {

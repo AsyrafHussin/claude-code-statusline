@@ -9,7 +9,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // What each person sets for themselves in /config, the manifest's userConfig, with out-of-range numbers clamped
-export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, noAttribution: false }
+export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, noAttribution: false, gitStrict: true }
 
 export const readConfig = (options: PluginOptions) => {
   const text = (key: string, fallback: string) => (typeof options[key] === 'string' ? (options[key] as string) : fallback)
@@ -21,6 +21,7 @@ export const readConfig = (options: PluginOptions) => {
     padRows: whole('padRows', DEFAULTS.padRows, 0, 2),
     rollingDays: whole('historyDays', DEFAULTS.rollingDays, 7, 62),
     noAttribution: typeof options.noAttribution === 'boolean' ? options.noAttribution : DEFAULTS.noAttribution,
+    gitStrict: typeof options.gitStrict === 'boolean' ? options.gitStrict : DEFAULTS.gitStrict,
   }
 }
 
@@ -242,10 +243,20 @@ const OTHER_VERBS = new Set([
 
 export type LooseGit = { steps: GitStep[]; aliases: string[] }
 
+// A heredoc's body is data unless a shell reads it: "python3 - <<'EOF'" or "cat <<EOF" feed text to a
+// program, "bash <<EOF" runs it. Bodies fed to anything but a shell are left out before reading for git
+const HEREDOC_FED = /(^|\n)([^\n]*?)<<-?\s*(['"]?)(\w+)\3[^\n]*\n[\s\S]*?\n\s*\4\s*(?=\n|$)/g
+const SHELL_READS = /(?:^|[\s;&|(])(?:sh|bash|zsh|dash|ksh|fish|eval|source|\.)\s*(?:-\S+\s*)*$/
+
+export const withoutDataHeredocs = (command: string) =>
+  command.replace(HEREDOC_FED, (whole, start: string, before: string) =>
+    SHELL_READS.test(before.trim().replace(/\s*<*$/, '')) ? whole : `${start}${before}<<HEREDOC`,
+  )
+
 export const looseGitSteps = (command: string): LooseGit => {
   const steps = new Set<GitStep>()
   const aliases = new Set<string>()
-  for (const [, verb = ''] of command.matchAll(LOOSE_STEP)) {
+  for (const [, verb = ''] of withoutDataHeredocs(command).matchAll(LOOSE_STEP)) {
     if (verb === 'push') steps.add('push')
     else if (verb === 'add' || verb === 'commit') steps.add('commit')
     else if (!OTHER_VERBS.has(verb)) aliases.add(verb)

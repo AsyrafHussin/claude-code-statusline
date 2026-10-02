@@ -10,6 +10,7 @@ import {
   formatTokens,
   gitDecision,
   isSensitivePath,
+  withoutDataHeredocs,
   looseGitSteps,
   parsePlainGit,
   parseShortstat,
@@ -118,6 +119,7 @@ describe('settings', () => {
       padRows: 2,
       rollingDays: 7,
       noAttribution: false,
+      gitStrict: true,
     })
     expect(readConfig({ initials: 'AH', cardColor: '#000000' })).toMatchObject({ initials: 'AH', card: '#000000' })
   })
@@ -252,6 +254,15 @@ describe('git switches', () => {
       expect(looseGitSteps(command).steps).toEqual(['push'])
     }
     expect(looseGitSteps('env git commit -m x').steps).toEqual(['commit'])
+  })
+
+  test('a heredoc fed to a program is data; one fed to a shell is run', () => {
+    expect(looseGitSteps("python3 - <<'PY'\ns.replace('`push [remote]`', x)\nprint('git push')\nPY").steps).toEqual([])
+    expect(looseGitSteps('cat <<EOF > notes.md\ngit commit -m x\nEOF').steps).toEqual([])
+    expect(looseGitSteps('bash <<EOF\ngit push\nEOF').steps).toEqual(['push'])
+    expect(looseGitSteps("sh -s <<'EOF'\ngit push --force\nEOF").steps).toEqual(['push'])
+    expect(looseGitSteps("git commit -F - <<'EOF'\nmsg mentions git push\nEOF").steps).toEqual(['commit'])
+    expect(withoutDataHeredocs("python3 - <<'PY'\nbody\nPY")).toBe('python3 - <<HEREDOC')
   })
 
   test('names words that may be aliases, and reads what an alias does', () => {

@@ -30,6 +30,7 @@ Each is a row in `/config`, or run `/plugin configure statusline-band@claude-cod
 | `padRows` | `1` | Empty rows above and below the stats, 0 to 2 |
 | `historyDays` | `30` | Days the rolling cost and the history pane cover, 7 to 62 |
 | `noAttribution` | `false` | Leave Co-Authored-By, Claude-Session and the Claude Code footer out of commits and pull requests |
+| `gitStrict` | `true` | On: with a git switch on auto, only plain commands naming their repo with `-C` run without a prompt. Off: any git command runs without a prompt while the repo's switch is on auto |
 
 ## What it runs, reads, keeps and sends
 

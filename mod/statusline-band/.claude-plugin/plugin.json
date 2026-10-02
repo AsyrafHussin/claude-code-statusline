@@ -46,6 +46,12 @@
       "title": "No Claude credit in commits",
       "description": "Leave Co-Authored-By, Claude-Session and the Claude Code footer out of commits and pull requests",
       "default": false
+    },
+    "gitStrict": {
+      "type": "boolean",
+      "title": "Strict git switches",
+      "description": "On: with a switch on auto, only plain git commands naming their repo with -C run without a prompt; any other shape asks. Off: any git command runs without a prompt while the repo's switch is on auto",
+      "default": true
     }
   }
 }
