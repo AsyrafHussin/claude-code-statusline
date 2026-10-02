@@ -594,3 +594,24 @@ export const parseSearch = (text: string): FoundTrack[] | null => {
 
 // A Spotify track URI that is safe to put inside an AppleScript string, or null
 export const safeTrackUri = (uri: string) => (/^spotify:track:[A-Za-z0-9]+$/.test(uri) ? uri : null)
+
+// Text cut or padded to exactly `n` columns, with … where it was cut
+export const fitText = (text: string, n: number) => {
+  const chars = [...text]
+  if (n <= 0) return ''
+  if (chars.length <= n) return text + ' '.repeat(n - chars.length)
+  return `${chars.slice(0, n - 1).join('')}…`
+}
+
+// The search table's column widths for a pane `columns` wide: number, title, artist, album, time,
+// with two spaces between; the album goes first when there is no room for it
+export const searchColumns = (columns: number) => {
+  const room = Math.max(30, columns - 4)
+  const fixed = 2 + 2 + 5 // number, gaps before the time, the time
+  const flexible = room - fixed - 2 * 3
+  const hasAlbum = flexible >= 60
+  const title = Math.floor(flexible * (hasAlbum ? 0.42 : 0.6))
+  const artist = Math.floor(flexible * (hasAlbum ? 0.28 : 0.4))
+  const album = hasAlbum ? flexible - title - artist : 0
+  return { title, artist, album }
+}

@@ -606,7 +606,7 @@ async function openSearch($: EngineInterface) {
       tracks: [],
     }))
   }
-  await $.ui.open({ id: SEARCH_PANE, title: 'Search Spotify', focus: true, closeOnEscape: true, holdToasts: true, rows: 16 })
+  await $.ui.open({ id: SEARCH_PANE, title: 'Search Spotify', focus: true, closeOnEscape: true, holdToasts: true, rows: 20, columns: 110 })
 }
 
 async function searchSpotify($: EngineInterface, query: string) {
@@ -944,6 +944,8 @@ export const register: Register = (on, options) => {
     return drawSearchPane($.ui.resolve(e), {
       ...state,
       rows: e.viewport?.rows ?? 16,
+      columns: e.viewport?.columns ?? 100,
+      playingUri: (await read($, music))?.trackId ?? null,
       onSearch: query => void searchSpotify($, query),
       onPlay: track => void playFound($, track),
     })

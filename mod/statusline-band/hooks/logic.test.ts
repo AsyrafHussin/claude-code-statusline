@@ -8,6 +8,7 @@ import {
   cleanCommitMessage,
   gitGuide,
   dayLabel,
+  fitText,
   formatClock,
   formatReset,
   formatTokens,
@@ -22,6 +23,7 @@ import {
   pixelsToCells,
   readBmp,
   safeTrackUri,
+  searchColumns,
   parseSearch,
   parseShortstat,
   parseStatusV2,
@@ -478,6 +480,21 @@ describe('spotify search', () => {
   test('only a plain track URI goes into AppleScript', () => {
     expect(safeTrackUri('spotify:track:4uLU6hMCjMI75M1A2tKUQC')).toBe('spotify:track:4uLU6hMCjMI75M1A2tKUQC')
     expect(safeTrackUri('spotify:track:x" & do shell script "rm')).toBe(null)
+  })
+})
+
+describe('search table', () => {
+  test('fits text to a width', () => {
+    expect(fitText('Kerosene', 10)).toBe('Kerosene  ')
+    expect(fitText('Everything’s Falling', 10)).toBe('Everythin…')
+    expect(fitText('abc', 0)).toBe('')
+  })
+
+  test('drops the album column when the pane is narrow', () => {
+    expect(searchColumns(60).album).toBe(0)
+    const wide = searchColumns(120)
+    expect(wide.album > 0).toBe(true)
+    expect(2 + 2 + wide.title + 2 + wide.artist + 2 + wide.album + 2 + 5 <= 116).toBe(true)
   })
 })
 
