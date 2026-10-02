@@ -858,6 +858,7 @@ export const register: Register = (on, options) => {
       isBlinking: await read($, isBlinking),
       music: runtime.config.spotify ? await read($, music) : null,
       canDrawArt: e.surface === 'terminal',
+      logoFile: e.surface === 'terminal' ? `${$.plugin.root}/assets/spotify.png` : undefined,
       actions: ACTIONS,
       onHistory: () => void openHistory($, s.day),
       onCompact: () => void compactNow($),

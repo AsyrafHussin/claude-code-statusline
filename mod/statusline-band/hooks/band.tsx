@@ -21,13 +21,15 @@ import type { Config, GitAuto } from './state'
 import type { Limit, Mood, Music, Snapshot, TurnTokens } from '../types'
 
 // The elements the band draws with, as $.ui.resolve gives them; Raster only on the terminal
-export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & Partial<Pick<Elements['terminal'], 'Raster'>>
+export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & Partial<Pick<Elements['terminal'], 'Raster' | 'Image'>>
 
-// The album art's box, in cells: each cell shows two pixels, so the picture is 7 by 6, three rows tall,
-// as wide as Clawd's head and shirt so it sits square under him
-export const ART_COLUMNS = 7
+// The album art's box, in cells: each cell shows two pixels, so the picture is 6 by 6, three rows tall
+export const ART_COLUMNS = 6
 export const ART_ROWS = 3
 const SPOTIFY_GREEN = '#1db954'
+// The Spotify logo's box under Clawd, in cells, about square on screen
+const LOGO_COLUMNS = 7
+const LOGO_ROWS = 3
 export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open'
 
 // A button under the card: most send a prompt as if typed; one with no prompt runs itself (quick commit)
@@ -50,6 +52,8 @@ export type BandView = {
   // What Spotify plays, null when it plays nothing (or the setting is off)
   music: Music | null
   canDrawArt: boolean
+  // The Spotify logo, a PNG the plugin ships; absent where pictures cannot be drawn
+  logoFile?: string
   actions: Action[]
   onHistory: () => void
   onCompact: () => void
@@ -112,7 +116,7 @@ const clawdSide = (feeling: Mood, beat: number, dust: string[] | undefined): [st
   return [0, 1, 2].map(row => [dust?.[row] ?? '  ', DUST_COLOR])
 }
 
-export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
+export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandView) {
   const { s, config, turn, feeling, beat, tick, isWorking } = view
 
   // Pieces of text whose widths are known, so the frame can be drawn to fit them
@@ -352,6 +356,8 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
   // shuffle, repeat and volume; its bottom edge, the track heard before this one
   const drawMusic = (m: Music) => {
     const hasArt = view.canDrawArt && Raster !== undefined && m.art !== null
+    // The card makes room on its right for the album art
+    const cardWidth = hasArt ? total - ART_COLUMNS - 2 : total
     const time = `${formatClock(m.positionMs)} / ${formatClock(m.durationMs)}`
     const last = m.recent[0]
     // Spotify's card is framed in Spotify green
@@ -365,7 +371,7 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
       line(' ─ '),
     ]
     const track = [m.name, m.artist ? ` — ${m.artist}` : '', m.album ? ` · ${m.album}` : '']
-    const roomForTrack = Math.max(0, total - width(head) - 4)
+    const roomForTrack = Math.max(0, cardWidth - width(head) - 4)
     const trackSegs: Seg[] = []
     let used = 0
     track.forEach((part, i) => {
@@ -377,17 +383,17 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
       trackSegs.push(i === 0 ? { text, bold: true } : i === 1 ? { text } : { text, dim: true })
     })
     const topMusic = [...head, ...trackSegs, { text: ' ' }]
-    const topLine = [...topMusic, line('─'.repeat(Math.max(1, total - width(topMusic) - 2))), line('─╮')]
+    const topLine = [...topMusic, line('─'.repeat(Math.max(1, cardWidth - width(topMusic) - 2))), line('─╮')]
 
     // Bottom edge: the track heard before this one
     const lastSegs: Seg[] = last
       ? [{ text: ' ' }, { text: `last: ${last.name} — ${last.artist} · ${s.now - last.at < 60_000 ? 'just now' : `${formatReset(s.now - last.at)} ago`}`, dim: true }, { text: ' ' }]
       : []
-    const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, total - width(lastSegs) - 4))), line('─╯')]
+    const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, cardWidth - width(lastSegs) - 4))), line('─╯')]
 
     // Inside: the controls, progress and the time, then shuffle, repeat and volume on the right
     const toggles = `shuffle · repeat · vol − ${m.volume}% +`
-    const cells = Math.max(10, total - 2 - 4 - 14 - (time.length + 2) - toggles.length - 4)
+    const cells = Math.max(10, cardWidth - 2 - 4 - 14 - (time.length + 2) - toggles.length - 4)
     const filled = m.durationMs > 0 ? Math.min(cells, Math.round((m.positionMs / m.durationMs) * cells)) : 0
     const toggle = (key: MusicCommand, label: string, isOn: boolean) => (
       <Button key={`music-${key}`} plain dimColor={!isOn} label={label} onPress={() => view.onMusic(key)} />
@@ -395,13 +401,16 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
 
     return (
       <Box>
-        {/* The album art sits under Clawd, as wide as his head and shirt */}
-        <Box width={CLAWD_WIDTH} flexShrink={0} paddingLeft={CLAWD_BODY_FROM} alignItems="center">
-          {hasArt && m.art ? <Raster key="album-art" columns={ART_COLUMNS} rows={ART_ROWS} cells={m.art} /> : null}
+        {/* Under Clawd, the Spotify logo as a picture where the terminal can show one (kitty, Ghostty);
+            elsewhere the Image draws its alt, the word Spotify */}
+        <Box width={CLAWD_WIDTH} flexShrink={0} paddingLeft={CLAWD_BODY_FROM - 1}>
+          {view.logoFile && Image ? (
+            <Image key="spotify-logo" source={{ file: view.logoFile, format: 'png' }} columns={LOGO_COLUMNS} rows={LOGO_ROWS} alt="Spotify" />
+          ) : null}
         </Box>
         <Box flexDirection="column" backgroundColor={card} paddingX={CARD_INSET}>
           <Text wrap="truncate">{draw(topLine)}</Text>
-          <Box width={total}>
+          <Box width={cardWidth}>
             <Text wrap="truncate">{draw([line('│')])}</Text>
             <Box flexGrow={1} paddingX={2} justifyContent="space-between">
               <Box>
@@ -431,6 +440,12 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
           </Box>
           <Text wrap="truncate">{draw(bottomLine)}</Text>
         </Box>
+        {/* The album art, small, on the card's right */}
+        {hasArt && m.art ? (
+          <Box marginLeft={1} flexShrink={0}>
+            <Raster key="album-art" columns={ART_COLUMNS} rows={ART_ROWS} cells={m.art} />
+          </Box>
+        ) : null}
       </Box>
     )
   }
