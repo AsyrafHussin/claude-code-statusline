@@ -347,13 +347,15 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
       ))}
     </Box>
   )
-  // Spotify, in a card of its own drawn like the main one and as wide, with the album art under Clawd.
+  // Spotify, in a card of its own framed in Spotify green, drawn like the main one and as wide, with the album art under Clawd.
   // Its top edge holds the state and the track; inside, the controls, progress with the time, and
   // shuffle, repeat and volume; its bottom edge, the track heard before this one
   const drawMusic = (m: Music) => {
     const hasArt = view.canDrawArt && Raster !== undefined && m.art !== null
     const time = `${formatClock(m.positionMs)} / ${formatClock(m.durationMs)}`
     const last = m.recent[0]
+    // Spotify's card is framed in Spotify green
+    const line = (text: string): Seg => ({ text, color: SPOTIFY_GREEN })
 
     // Top edge, the track cut to fit
     const head: Seg[] = [
