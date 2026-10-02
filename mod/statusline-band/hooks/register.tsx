@@ -528,8 +528,10 @@ async function readSpotify($: EngineInterface) {
   await update($, music, () => ({ ...playing, recent: recent.filter(t => t.trackId !== playing.trackId).slice(0, RECENT_SHOWN) }))
 }
 
+// Steps only while Beatbot shows: a track plays and the card is not minimized, so the band is not
+// redrawn four times a second for nothing
 async function stepDance($: EngineInterface) {
-  if ((await read($, music))?.isPlaying) await update($, danceTick, n => n + 1)
+  if ((await read($, music))?.isPlaying && !(await read($, musicCompact))) await update($, danceTick, n => n + 1)
 }
 
 // The controls under the band, each one AppleScript line to Spotify; then the state is read again at once
@@ -573,15 +575,17 @@ let spotifyToken: { value: string; until: number } | null = null
 // The app's client secret: the setting when it holds one, else the macOS Keychain item KEYCHAIN_SERVICE,
 // since /config leaves out settings marked sensitive. Read once per load
 const KEYCHAIN_SERVICE = 'statusline-band-spotify'
-let keychainSecret: string | null | undefined
+let keychainSecret: string | undefined
 async function readSpotifySecret($: EngineInterface) {
   if (runtime.config.spotifyClientSecret) return runtime.config.spotifyClientSecret
   if (keychainSecret !== undefined) return keychainSecret
   const found = await $.process
     .run(['security', 'find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'], { timeoutMs: 5000 })
     .catch(() => null)
-  keychainSecret = found?.exitCode === 0 && found.stdout.trim() ? found.stdout.trim() : null
-  return keychainSecret
+  // Kept only once found, so a secret added after a failed search is read on the next one
+  const secret = found?.exitCode === 0 ? found.stdout.trim() : ''
+  if (secret) keychainSecret = secret
+  return secret || null
 }
 
 async function readSpotifyToken($: EngineInterface) {
@@ -598,7 +602,12 @@ async function readSpotifyToken($: EngineInterface) {
     })
     .catch(() => null)
   if (!got?.ok) return null
-  const body = JSON.parse(got.text) as { access_token?: string; expires_in?: number }
+  let body: { access_token?: string; expires_in?: number }
+  try {
+    body = JSON.parse(got.text) as typeof body
+  } catch {
+    return null
+  }
   if (!body.access_token) return null
   spotifyToken = { value: body.access_token, until: now + ((body.expires_in ?? 3600) - 60) * 1000 }
   return spotifyToken.value
@@ -616,6 +625,9 @@ async function openSearch($: EngineInterface) {
         : `Add the client secret to the Keychain: security add-generic-password -U -s ${KEYCHAIN_SERVICE} -a client-secret -w`,
       tracks: [],
     }))
+  } else {
+    // A failure from before, such as missing settings since set, does not greet the next opening
+    await update($, search, (state): SpotifySearch => (state.status === 'failed' ? { ...state, status: 'idle', message: '' } : state))
   }
   await $.ui.open({ id: SEARCH_PANE, title: 'Search Spotify', focus: true, closeOnEscape: true, holdToasts: true, rows: SEARCH_ROWS, columns: 72 })
 }
@@ -636,7 +648,11 @@ async function searchSpotify($: EngineInterface, query: string) {
   }
   const url = `https://api.spotify.com/v1/search?type=track&limit=${SEARCH_LIMIT}&q=${encodeURIComponent(text)}`
   const got = await $.http.fetch(url, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null)
+  // A token Spotify no longer takes is dropped, so the next search asks for a new one
+  if (got?.status === 401) spotifyToken = null
   const tracks = got?.ok ? parseSearch(got.text) : null
+  // A newer search typed meanwhile wins: this one's answer is dropped
+  if ((await read($, search)).query !== text) return
   await update($, search, (): SpotifySearch =>
     tracks === null
       ? { query: text, status: 'failed', message: `The search failed${got ? ` (${got.status})` : ''}.`, tracks: [] }
