@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import {
+  aliasSteps,
   barCells,
   cleanCommitMessage,
   gitGuide,
@@ -8,9 +9,11 @@ import {
   formatReset,
   formatTokens,
   gitDecision,
+  isSensitivePath,
   looseGitSteps,
-  mayNameAnotherRepo,
   parsePlainGit,
+  parseShortstat,
+  parseStatusV2,
   placeFolder,
   prettyModel,
   readConfig,
@@ -129,13 +132,15 @@ describe('settings', () => {
 describe('git switches', () => {
   const all = { commit: true, push: true }
   const none = { commit: false, push: false }
-  const decide = (command: string, auto: { commit: boolean; push: boolean }) =>
-    gitDecision(parsePlainGit(command), looseGitSteps(command), auto)
+  const decide = (command: string, auto: { commit: boolean; push: boolean }, mode?: string) => {
+    const plain = parsePlainGit(command)
+    return gitDecision(plain, plain?.steps ?? looseGitSteps(command).steps, auto, mode)
+  }
 
   test('reads the plain forms', () => {
-    expect(parsePlainGit("git add -A && git commit -m 'fix: a thing' && git push")).toEqual({
+    expect(parsePlainGit("git -C /r add -A && git -C /r commit -m 'fix: a thing' && git -C /r push")).toEqual({
       steps: ['commit', 'push'],
-      dir: undefined,
+      dir: '/r',
     })
     expect(parsePlainGit('git -C /code/repo push -u origin main')).toEqual({ steps: ['push'], dir: '/code/repo' })
     expect(parsePlainGit("git -C /code/repo commit -q -m 'line one\n\nline two'")).toEqual({
@@ -144,13 +149,35 @@ describe('git switches', () => {
     })
   })
 
-  test('allows a plain command only with every step on auto', () => {
-    expect(decide('git push', all)).toBe('allow')
-    expect(decide('git push', none)).toBe('ask')
-    expect(decide("git add . && git commit -m 'x'", { commit: true, push: false })).toBe('allow')
-    expect(decide("git add . && git commit -m 'x' && git push", { commit: true, push: false })).toBe('ask')
+  test('allows only a plain command that names its repo, with every step on auto', () => {
+    expect(decide('git -C /r push', all)).toBe('allow')
+    expect(decide('git -C /r push', none)).toBe('ask')
+    expect(decide("git -C /r add . && git -C /r commit -m 'x'", { commit: true, push: false })).toBe('allow')
+    expect(decide("git -C /r add . && git -C /r commit -m 'x' && git -C /r push", { commit: true, push: false })).toBe('ask')
     expect(decide('ls -la', none)).toBe('pass')
     expect(decide("grep -rn 'git push' README.md", none)).toBe('pass')
+  })
+
+  // The Bash tool keeps its own folder between calls, so a step that does not name its repo may act on
+  // another repo than the session's: it asks even on auto
+  test('a step without -C asks even on auto', () => {
+    expect(decide('git push', all)).toBe('ask')
+    expect(decide("git add . && git commit -m 'x'", all)).toBe('ask')
+  })
+
+  test('nothing is allowed in plan mode', () => {
+    expect(decide('git -C /r push', all, 'plan')).toBe('pass')
+    expect(decide('git -C /r push', all, 'bypassPermissions')).toBe('allow')
+  })
+
+  test('a quoted repo path may hold spaces and letters beyond ASCII', () => {
+    expect(parsePlainGit("git -C '/Users/x/My Projects/app' push")).toEqual({ steps: ['push'], dir: '/Users/x/My Projects/app' })
+    expect(parsePlainGit("git -C '/Users/x/Développement/app' add 'docs/read me.md'")).toEqual({
+      steps: ['commit'],
+      dir: '/Users/x/Développement/app',
+    })
+    expect(parsePlainGit('git -C repo push')).toBe(null)
+    expect(parsePlainGit('git -C /a add . && git push')).toBe(null)
   })
 
   // Each shape below once slipped past as "only git"; now none is plain, so each asks even on auto
@@ -158,13 +185,13 @@ describe('git switches', () => {
     for (const command of [
       "git commit -F - <<'EOF' && rm -rf ~/x\nmsg\nEOF",
       'git commit -F - <<EOF\n$(touch /tmp/pwn)\nEOF',
-      'git push && rm -rf build',
+      'git -C /r push && rm -rf build',
       'git commit -m "$(cat notes)" && git push',
       'R=/code/repo; git -C $R push',
-      'git push > /tmp/out',
+      'git -C /r push > /tmp/out',
       'git -c core.hooksPath=/tmp/h commit -m x',
-      'git push --receive-pack=/tmp/evil origin',
-      'git diff --output=/tmp/o && git add .',
+      'git -C /r push --receive-pack=/tmp/evil origin',
+      'git -C /r diff --output=/tmp/o && git -C /r add .',
       'cd /other; git push',
       "git add . && cd /other && git push",
       "git -C /a commit -m 'x' && git -C /b push",
@@ -178,17 +205,17 @@ describe('git switches', () => {
 
   test('a force push always asks, in every spelling', () => {
     for (const command of [
-      'git push --force',
-      'git push -f origin main',
-      'git push -uf origin main',
-      'git push -fu',
-      'git push --force-with-lease',
-      'git push --force-w origin main',
-      'git push --mirror',
-      'git push origin +main',
-      "git push origin '+main'",
-      'git push origin main:other',
-      'git push \\\n  --force',
+      'git -C /r push --force',
+      'git -C /r push -f origin main',
+      'git -C /r push -uf origin main',
+      'git -C /r push -fu',
+      'git -C /r push --force-with-lease',
+      'git -C /r push --force-w origin main',
+      'git -C /r push --mirror',
+      'git -C /r push origin +main',
+      "git -C /r push origin '+main'",
+      'git -C /r push origin main:other',
+      'git -C /r push \\\n  --force',
     ]) {
       expect(decide(command, all)).toBe('ask')
     }
@@ -196,33 +223,87 @@ describe('git switches', () => {
 
   test('reading steps ride along without asking', () => {
     expect(decide('git -C /a push && git -C /a log --oneline -1', all)).toBe('allow')
-    expect(decide("git add . && git commit -m 'x' && git status --short", { commit: true, push: false })).toBe('allow')
+    expect(decide("git -C /a add . && git -C /a commit -m 'x' && git -C /a status --short", { commit: true, push: false })).toBe('allow')
     expect(decide('git status && git diff --stat', none)).toBe('pass')
-    expect(decide('git diff --output=/tmp/o && git push', all)).toBe('ask')
-    expect(decide('git log --ext-diff && git push', all)).toBe('ask')
+    expect(decide('git -C /a diff --output=/tmp/o && git -C /a push', all)).toBe('ask')
+    expect(decide('git -C /a log --ext-diff && git -C /a push', all)).toBe('ask')
   })
 
-  test('tells when a command may point git at another repo', () => {
-    for (const command of ['cd /repo-kerja && git push', 'git push; cd /x', 'pushd /x && git push', 'R=/x; git -C $R push', 'git --git-dir=/x/.git push', 'GIT_DIR=/x/.git git push']) {
-      expect(mayNameAnotherRepo(command)).toBe(true)
+  // Each of these once went unseen, so the hook never looked at it
+  test('sees a step behind a wrapper, a path, quotes or git options', () => {
+    for (const command of [
+      'env git push',
+      'command git push',
+      'FOO=1 git push',
+      'time git push',
+      'xargs git push',
+      'env -C /other git push',
+      'timeout 30 git push',
+      'sudo -u me git push',
+      '/usr/bin/git push',
+      '"git" push',
+      '\\git push',
+      'git --git-dir /x/.git push',
+      'git --namespace foo push',
+      "sh -c 'cd /other && git push --force'",
+      '"cd" /other && git push',
+      'eval "git push"',
+    ]) {
+      expect(looseGitSteps(command).steps).toEqual(['push'])
     }
-    for (const command of ['git push', 'git commit -F - && git push', 'git push origin main']) {
-      expect(mayNameAnotherRepo(command)).toBe(false)
-    }
+    expect(looseGitSteps('env git commit -m x').steps).toEqual(['commit'])
   })
 
-  test('a repo path is absolute and plain, the same for every step', () => {
-    expect(parsePlainGit('git -C repo push')).toBe(null)
-    expect(parsePlainGit("git -C '/code/my repo' push")).toBe(null)
-    expect(parsePlainGit('git -C /a add . && git -C /a push')).toEqual({ steps: ['commit', 'push'], dir: '/a' })
-    expect(parsePlainGit('git -C /a add . && git push')).toBe(null)
+  test('names words that may be aliases, and reads what an alias does', () => {
+    expect(looseGitSteps('git ci -m x').aliases).toEqual(['ci'])
+    expect(looseGitSteps('git status && git log').aliases).toEqual([])
+    expect(aliasSteps('commit -v')).toEqual(['commit'])
+    expect(aliasSteps('push --follow-tags')).toEqual(['push'])
+    expect(aliasSteps('!git add -A && git commit')).toEqual(['commit', 'push'])
+    expect(aliasSteps('log --oneline')).toEqual([])
+  })
+})
+
+describe('git status', () => {
+  test('reads branch, upstream, ahead and behind, stashes and changed paths in one go', () => {
+    const text = [
+      '# branch.oid 02cf6fbe9828eabb8d55138973d0ebf48cd48914',
+      '# branch.head main',
+      '# branch.upstream origin/main',
+      '# branch.ab +3 -1',
+      '# stash 2',
+      '1 .M N... 100644 100644 100644 abc abc README.md',
+      '? new.txt',
+      '! ignored.log',
+    ].join('\n')
+    expect(parseStatusV2(text)).toEqual({ branch: 'main', upstream: 'origin/main', ahead: 3, behind: 1, stashed: 2, changed: 2 })
+  })
+
+  test('a detached head shows its short commit, a new repo none', () => {
+    expect(parseStatusV2('# branch.oid 02cf6fbe98\n# branch.head (detached)').branch).toBe('02cf6fb')
+    expect(parseStatusV2('# branch.oid (initial)\n# branch.head main').branch).toBe('main')
+    expect(parseStatusV2('# branch.oid 02cf6fb\n# branch.head main').upstream).toBe(null)
+  })
+
+  test('reads shortstat lines', () => {
+    expect(parseShortstat(' 3 files changed, 12 insertions(+), 4 deletions(-)')).toEqual({ added: 12, removed: 4 })
+    expect(parseShortstat('')).toEqual({ added: 0, removed: 0 })
+  })
+
+  test('tells paths that may hold secrets', () => {
+    for (const path of ['.env', 'app/.env.local', 'id_rsa', 'certs/server.pem', 'config/credentials.json', '.npmrc']) {
+      expect(isSensitivePath(path)).toBe(true)
+    }
+    for (const path of ['README.md', 'src/env.ts', 'environment.md']) {
+      expect(isSensitivePath(path)).toBe(false)
+    }
   })
 })
 
 describe('commit messages', () => {
-  test('drops fences, quotes, credit lines and apostrophes', () => {
+  test('drops fences, quotes and credit lines, and keeps apostrophes', () => {
     const written = "```\nfix: keep the switch state\n\nThe refresh wrote it back. It's fixed now.\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/x\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n```"
-    expect(cleanCommitMessage(written)).toBe('fix: keep the switch state\n\nThe refresh wrote it back. Its fixed now.')
+    expect(cleanCommitMessage(written)).toBe("fix: keep the switch state\n\nThe refresh wrote it back. It's fixed now.")
     expect(cleanCommitMessage('"feat: add a thing"')).toBe('feat: add a thing')
   })
 
@@ -234,7 +315,7 @@ describe('commit messages', () => {
 describe('git guide', () => {
   test('names the plain form and each switch, and the credit rule only when asked', () => {
     const guide = gitGuide('/code/repo', { commit: true, push: false }, true)
-    expect(guide.includes('git -C /code/repo commit')).toBe(true)
+    expect(guide.includes("git -C '/code/repo' commit")).toBe(true)
     expect(guide.includes('commit is auto')).toBe(true)
     expect(guide.includes('push is ask')).toBe(true)
     expect(guide.includes('Commit on your own')).toBe(true)
@@ -250,6 +331,11 @@ describe('git guide', () => {
     const neither = gitGuide('/code/repo', { commit: false, push: false }, false)
     expect(neither.includes('Commit only when the user asks')).toBe(true)
     expect(neither.includes('Push only when the user asks')).toBe(true)
+  })
+
+  test('quotes the repo path, and says so when it cannot', () => {
+    expect(gitGuide('/Users/x/My Projects/app', { commit: true, push: true }, false).includes("git -C '/Users/x/My Projects/app' push")).toBe(true)
+    expect(gitGuide("/Users/x/it's", { commit: true, push: true }, false).includes('cannot name it')).toBe(true)
   })
 })
 

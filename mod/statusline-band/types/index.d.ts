@@ -33,6 +33,8 @@ export type Snapshot = {
     root: string | null
     branch: string
     changed: number
+    // The upstream branch, as "origin/main"; null when the branch has none
+    upstream: string | null
     hasUpstream: boolean
     ahead: number
     behind: number
@@ -46,8 +48,12 @@ export type Snapshot = {
     lastCommitAt: number | null
   } | null
   model: string
+  // The effort level, as the last prompt or tool call carried it
+  effort?: string
   startedAt: number
   now: number
+  // The local date, "2026-10-02", and time, "11:42 AM"
+  day: string
   time: string
   context: { percent: number; tokens: number; window: number } | null
   costUsd: number | null

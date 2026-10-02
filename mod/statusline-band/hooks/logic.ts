@@ -136,9 +136,12 @@ const plainWords = (command: string): string[] | null => {
   return words
 }
 
-// A repo path, a remote, a branch or a file: no leading dash, no "+" (a force refspec) and no ":"
+// A remote or a branch: no leading dash, no "+" (a force refspec) and no ":" (a src:dst refspec)
 const NAME = /^[\w.@/%=,][\w.@/%=,-]*$/
-const ABSOLUTE = /^\/[\w.@/%=,-]+$/
+// A file to add: anything that does not start with a dash; a quoted one may hold spaces
+const FILE = /^[^-\n][^\n]*$/
+// The repo's folder: an absolute path; quoted, it may hold spaces or letters beyond ASCII
+const ABSOLUTE = /^\/[^\n]*$/
 
 // Flags that only shape what a reading step prints; anything else (--output writes a file) is not plain
 const READ_FLAG =
@@ -160,7 +163,7 @@ const plainStep = (args: string[]): { step?: GitStep; dir?: string } | null => {
     return tail.every(arg => READ_FLAG.test(arg) || NAME.test(arg)) ? { dir } : null
   }
   if (verb === 'add') {
-    const isPlain = tail.length > 0 && tail.every(arg => arg === '-A' || arg === '--all' || NAME.test(arg))
+    const isPlain = tail.length > 0 && tail.every(arg => arg === '-A' || arg === '--all' || FILE.test(arg))
     return isPlain ? { step: 'commit', dir } : null
   }
   if (verb === 'commit') {
@@ -212,32 +215,67 @@ export const parsePlainGit = (command: string): PlainGit | null => {
   return { steps: [...steps], dir: [...dirs][0] }
 }
 
-// The git steps a command may take, read loosely so a step hidden in any shape is still seen: git where
-// a command starts (after &&, ;, |, a newline, a subshell, `sh -c "`) with any options, then add,
-// commit or push. Reading too much only asks more.
-const LOOSE_STEP = /(?:^|[;&|\n(`{]|\$\(|-c\s+["'])\s*(?:\S*\/)?git\b(?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--?[\w-]+(?:=\S+)?))*\s+(add|commit|push)\b/g
+// The git steps a command may take, read loosely so a step in any shape is still seen. git counts where
+// a command starts (after &&, ;, |, a newline, a subshell, `sh -c "`, eval) or behind a wrapper (env,
+// xargs, timeout, sudo, VAR=value...), as a path (/usr/bin/git), quoted ("git") or escaped (\git), with
+// any of its own options before the verb. Reading too much only asks more.
+const COMMAND_START = String.raw`(?:^|[;&|\n(\`{!]|\$\(|-c\s+["']|\beval\s+["']?)\s*`
+const WRAPPER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|env|command|builtin|exec|time|nice|nohup|xargs|sudo|doas|caffeinate|stdbuf|timeout|ionice|unbuffer|chronic)`
+const GIT_WORD = String.raw`["'\\]?(?:\S*/)?git["']?`
+const GIT_OPTION = String.raw`(?:-[Cc]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env)(?:=|\s+)\S+|-\S+)`
+const LOOSE_STEP = new RegExp(
+  String.raw`${COMMAND_START}(?:${WRAPPER}(?:\s+(?!["'\\]?(?:\S*/)?git\b)\S+)*?\s+)*${GIT_WORD}(?:\s+${GIT_OPTION})*\s+["']?([A-Za-z][\w-]*)`,
+  'g',
+)
 
-export const looseGitSteps = (command: string): GitStep[] => {
+// git's own commands besides add, commit and push: the switches leave them to the usual permissions.
+// Any other word after git may be an alias, which the hook looks up
+const OTHER_VERBS = new Set([
+  'status', 'log', 'diff', 'show', 'branch', 'fetch', 'rev-parse', 'rev-list', 'ls-files', 'ls-tree',
+  'remote', 'config', 'blame', 'grep', 'describe', 'shortlog', 'reflog', 'cat-file', 'check-ignore',
+  'for-each-ref', 'symbolic-ref', 'stash', 'tag', 'help', 'version', 'whatchanged', 'name-rev',
+  'merge-base', 'show-ref', 'var', 'count-objects', 'fsck', 'notes', 'worktree', 'switch', 'checkout',
+  'restore', 'clean', 'reset', 'rm', 'mv', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert', 'init',
+  'clone', 'archive', 'bisect', 'submodule', 'sparse-checkout', 'maintenance', 'gc', 'prune', 'am',
+  'apply', 'format-patch', 'difftool', 'mergetool', 'range-diff', 'cherry', 'request-pull',
+])
+
+export type LooseGit = { steps: GitStep[]; aliases: string[] }
+
+export const looseGitSteps = (command: string): LooseGit => {
   const steps = new Set<GitStep>()
-  for (const [, verb] of command.matchAll(LOOSE_STEP)) steps.add(verb === 'push' ? 'push' : 'commit')
-  return [...steps]
+  const aliases = new Set<string>()
+  for (const [, verb = ''] of command.matchAll(LOOSE_STEP)) {
+    if (verb === 'push') steps.add('push')
+    else if (verb === 'add' || verb === 'commit') steps.add('commit')
+    else if (!OTHER_VERBS.has(verb)) aliases.add(verb)
+  }
+  return { steps: [...steps], aliases: [...aliases] }
 }
 
-// Whether a command may point git at a repo other than the session's: a cd or pushd, -C, --git-dir,
-// --work-tree, or GIT_DIR / GIT_WORK_TREE. Only for a command that is not plain, whose repo is uncertain
-export const mayNameAnotherRepo = (command: string) =>
-  /(?:^|[\s;&|(])(?:cd|pushd)\s|(?:^|\s)-C\s|--git-dir|--work-tree|\bGIT_DIR\b|\bGIT_WORK_TREE\b/.test(command)
+// The steps a git alias takes, from its expansion: a shell alias ("!...") may do anything, so both
+export const aliasSteps = (expansion: string): GitStep[] => {
+  const text = expansion.trim()
+  if (text.startsWith('!')) return ['commit', 'push']
+  const [verb] = text.split(/\s+/)
+  if (verb === 'push') return ['push']
+  if (verb === 'add' || verb === 'commit') return ['commit']
+  return []
+}
 
-// What the switches make of a command: allow a plain one whose every step is on auto, ask for any other
-// that takes a git step, and pass the rest to the usual permissions
+// What the switches make of a command. Allow only a plain one that names its repo (-C /path) with every
+// step on auto, and never in plan mode; ask for any other that takes a git step, since its repo or its
+// shape is uncertain; pass the rest to the usual permissions
 export const gitDecision = (
   plain: PlainGit | null,
-  loose: GitStep[],
+  steps: GitStep[],
   auto: Record<GitStep, boolean>,
+  mode?: string,
 ): 'pass' | 'ask' | 'allow' => {
-  const steps = plain?.steps ?? loose
   if (steps.length === 0) return 'pass'
-  return plain !== null && steps.every(step => auto[step]) ? 'allow' : 'ask'
+  if (mode === 'plan') return 'pass'
+  const isCertain = plain !== null && plain.dir !== undefined
+  return isCertain && steps.every(step => auto[step]) ? 'allow' : 'ask'
 }
 
 // Lines that credit Claude in a commit or pull request: Co-Authored-By naming Claude, a Claude-Session
@@ -245,15 +283,52 @@ export const gitDecision = (
 const CLAUDE_CREDIT = /^\s*(?:co-authored-by:.*\bclaude\b.*|claude-session:.*|.*generated with \[?claude code\]?.*)$/gim
 
 // A commit message as a model wrote it, made ready to commit: no code fences or wrapping quotes, no line
-// crediting Claude, no apostrophes (so it fits the plain `commit -m '...'` form), blank runs collapsed
+// crediting Claude, blank runs collapsed
 export const cleanCommitMessage = (text: string) =>
   text
     .replace(/^\s*```\w*\n?|\n?```\s*$/g, '')
     .replace(/^\s*(["'])([\s\S]*)\1\s*$/, '$2')
     .replace(CLAUDE_CREDIT, '')
-    .replace(/'/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+
+// "--shortstat" output as lines added and removed
+export const parseShortstat = (text: string) => ({
+  added: Number(/(\d+) insertion/.exec(text)?.[1] ?? 0),
+  removed: Number(/(\d+) deletion/.exec(text)?.[1] ?? 0),
+})
+
+// "git status --porcelain=v2 --branch --show-stash" in one read: the branch (a short commit when
+// detached), its upstream, how far ahead and behind, stashes, and how many paths changed
+export const parseStatusV2 = (text: string) => {
+  let oid = ''
+  let head = ''
+  let upstream: string | null = null
+  let ahead = 0
+  let behind = 0
+  let stashed = 0
+  let changed = 0
+  for (const row of text.split('\n')) {
+    if (row.startsWith('# branch.oid ')) oid = row.slice(13).trim()
+    else if (row.startsWith('# branch.head ')) head = row.slice(14).trim()
+    else if (row.startsWith('# branch.upstream ')) upstream = row.slice(18).trim()
+    else if (row.startsWith('# branch.ab ')) {
+      const [a = '0', b = '0'] = row.slice(12).trim().split(/\s+/)
+      ahead = Math.abs(Number(a))
+      behind = Math.abs(Number(b))
+    } else if (row.startsWith('# stash ')) stashed = Number(row.slice(8).trim())
+    else if (row.trim() !== '' && !row.startsWith('#') && !row.startsWith('! ')) changed += 1
+  }
+  const branch = head && head !== '(detached)' ? head : oid && oid !== '(initial)' ? oid.slice(0, 7) : ''
+  return { branch, upstream, ahead, behind, stashed, changed }
+}
+
+// Paths that may hold secrets, to warn about before they are committed
+const SENSITIVE = /(?:^|\/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|keystore|jks)|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.json)?|secrets?\.[a-z]+|\.npmrc|\.netrc)$/i
+export const isSensitivePath = (path: string) => SENSITIVE.test(path.trim())
+
+// Single-quoted for the shell, or null when the text holds a single quote and cannot be
+export const shellQuote = (text: string) => (text.includes("'") ? null : `'${text}'`)
 
 // What the system prompt tells Claude about git in the session's repo: what each switch asks of it (on
 // auto it commits or pushes on its own; on ask only when asked), the plain form the switches let
@@ -269,10 +344,15 @@ export const gitGuide = (root: string, auto: Record<GitStep, boolean>, noAttribu
       ? 'Push on your own, right after each commit.'
       : 'When the user has you commit, push right after.'
     : 'Push only when the user asks; they confirm each push.'
+  const repo = shellQuote(root)
+  const form =
+    repo === null
+      ? 'This repo path holds a single quote, so the plain form cannot name it: every git add, commit and push here asks.'
+      : `When you add, commit or push here, use only the plain form, so the switches can let it through: \`git -C ${repo} add <files>\`, \`git -C ${repo} commit -m '<message>'\` and \`git -C ${repo} push\`, joined with && when you do more than one, every step with that same -C. Put the whole message in single quotes (it may span lines) and leave apostrophes out of it. Do not use heredocs, $(...), cd, pipes, or git options before the step: any of those always asks.`
   return [
     `# Git in ${name}`,
     `The user's git switches for this repo: commit is ${state('commit')}, push is ${state('push')}. ${commit} ${push}`,
-    `When you add, commit or push here, use only the plain form, so the switches can let it through: \`git -C ${root} add <files>\`, \`git -C ${root} commit -m '<message>'\` and \`git -C ${root} push\`, joined with && when you do more than one. Put the whole message in single quotes (it may span lines) and leave apostrophes out of it. Do not use heredocs, $(...), cd, pipes, or git options before the step: any of those always asks.`,
+    form,
     ...(noAttribution
       ? ['Do not credit Claude in commits or pull requests: no Co-Authored-By line naming Claude, no Claude-Session line, no "Generated with Claude Code" footer.']
       : []),
