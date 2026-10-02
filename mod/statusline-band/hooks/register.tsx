@@ -11,6 +11,8 @@ import {
   formatReset,
   formatTokens,
   formatUsd,
+  gitDecision,
+  parseGitCommand,
   perHour,
   placeFolder,
   prettyModel,
@@ -20,6 +22,7 @@ import {
   shirtText,
   sumDays,
 } from './logic'
+import type { GitStep } from './logic'
 import type { CostLedger, HistoryDay, Limit, Mood, PaceLog, Snapshot, TokenLedger } from '../types'
 
 const snap = atom({ plugin: 'statusline-band', key: 'snap' } as const, null)
@@ -77,6 +80,10 @@ const LEDGER_SESSIONS = 100
 const COST_KEY = 'costs-v2'
 // Tokens are counted by the mod at each turn's end, so they start from when it was installed
 const TOKEN_KEY = 'tokens-v1'
+// Per repo, by its root: whether Claude may commit, and push, without asking
+const GIT_AUTO_KEY = 'git-auto-v1'
+type GitAuto = Record<GitStep, boolean>
+const REVIEW: GitAuto = { commit: false, push: false }
 const GIT_TIMEOUT = { timeoutMs: 5000 }
 // Clawd, the Claude Code mascot, beside the panel in a shirt with the owner's initials:
 // standing when idle, running while Claude works (arms and legs trade places each step,
@@ -168,6 +175,28 @@ async function tickMood($: EngineInterface) {
 async function markActive($: EngineInterface) {
   lastActiveAt = await $.clock.now()
   if ((await read($, mood)) === 'sleep') await update($, mood, () => 'idle')
+}
+
+async function readGitAuto($: EngineInterface, root: string): Promise<GitAuto> {
+  const all = ((await $.store.get(GIT_AUTO_KEY)) as Record<string, GitAuto> | undefined) ?? {}
+  return { ...REVIEW, ...all[root] }
+}
+
+// Flips one switch, auto or ask, for the repo the session is in, and redraws the band with it
+async function toggleGitAuto($: EngineInterface, step: GitStep) {
+  const s = await read($, snap)
+  const root = s?.git?.root
+  if (!s || !root) return
+  const all = ((await $.store.get(GIT_AUTO_KEY)) as Record<string, GitAuto> | undefined) ?? {}
+  const next = { ...REVIEW, ...all[root], [step]: !(all[root]?.[step] ?? false) }
+  await $.store.set(GIT_AUTO_KEY, { ...all, [root]: next })
+  await update($, snap, was => (was ? { ...was, gitAuto: next } : was))
+}
+
+// The root of the repo a folder is in, or null outside one
+async function repoRoot($: EngineInterface, dir: string) {
+  const top = await $.process.run(['git', '-C', dir, 'rev-parse', '--show-toplevel'], GIT_TIMEOUT).catch(() => null)
+  return top?.exitCode === 0 ? top.stdout.trim() : null
 }
 
 async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']> {
@@ -392,6 +421,7 @@ async function refresh($: EngineInterface) {
       rollingUsd: ledger ? sumDays(ledger.days, since, day) : null,
       limits,
       agents: agents.filter(a => a.status === 'running').length,
+      gitAuto: repo?.root ? await readGitAuto($, repo.root) : null,
     }
     // Commits that were waiting to go out and are now pushed: Clawd cheers
     const before = await read($, snap)
@@ -506,6 +536,35 @@ export const register: Register = (on, options) => {
     const ran = await next(e)
     void refresh($)
     return ran
+  })
+
+  // The switches at work: a git add, commit or push in a repo asks first while its switch is on ask,
+  // and runs without a prompt while it is on auto and the command is nothing but git
+  on('classic.PreToolUse', { tool: 'Bash' }, async ($, e, next) => {
+    const parsed = parseGitCommand(e.command)
+    if (parsed.steps.length === 0) return next(e)
+    const cwd = await $.session.cwd()
+    // The folder the command names, when it can be told: ~ expanded, a $variable cannot be
+    const home = (await $.env.get('HOME')) ?? ''
+    const named = parsed.dir?.replace(/^~(?=\/|$)/, home)
+    const isUnknown = named !== undefined && named.includes('$')
+    const dir = named === undefined || isUnknown ? cwd : named.startsWith('/') ? named : `${cwd}/${named}`
+    const root = (await repoRoot($, dir)) ?? (isUnknown ? await repoRoot($, cwd) : null)
+    if (root === null) return isUnknown ? { ask: 'Confirm this git step: the band could not tell which repo it is in.' } : next(e)
+    // A repo the command names but the band cannot be sure of is held to ask
+    const auto = isUnknown ? REVIEW : await readGitAuto($, root)
+    const decision = gitDecision(parsed, auto)
+    if (decision === 'allow') return { allow: true }
+    if (decision === 'ask') {
+      const name = root.split('/').filter(Boolean).pop() ?? root
+      if (isUnknown) return { ask: `Confirm this git step: the band could not be sure it is in ${name}.` }
+      const held = parsed.steps.filter(step => !auto[step])
+      if (held.length === 0) return { ask: `${name}: a force push always asks, even with "push" on auto.` }
+      const doing = held.map(step => (step === 'push' ? 'pushing' : 'committing')).join(' and ')
+      const switches = held.map(step => `"${step}"`).join(' and ')
+      return { ask: `${name} asks before ${doing}. Switch ${switches} to auto in the band to skip this.` }
+    }
+    return next(e)
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -749,6 +808,8 @@ export const register: Register = (on, options) => {
     while (stats.length > 1 && stats.reduce((n, st) => n + width(st.segs) + width([divider]), 0) > room) stats.pop()
 
     const ctxFull = s.context !== null && s.context.percent >= COMPACT_AT
+    // A snapshot kept from before a reload may predate the ticks
+    const gitAuto = (s.gitAuto as GitAuto | null | undefined) ?? null
     // A side of the frame, one "│" per row of the stats and their padding
     const edge = (side: string) => (
       <Box flexDirection="column">
@@ -809,8 +870,9 @@ export const register: Register = (on, options) => {
             <Text wrap="truncate">{draw(bottom)}</Text>
           </Box>
         </Box>
-        {/* Drawn plain, as the band's own dim text: "1: push · 2: find bugs · ..." */}
-        <Box marginLeft={CLAWD_WIDTH + CARD_INSET + 3}>
+        {/* Drawn plain, as the band's own dim text: "1: push · 2: find bugs · ...", the repo's ticks on the right */}
+        <Box marginLeft={CLAWD_WIDTH + CARD_INSET + 3} width={total - 4} justifyContent="space-between">
+          <Box>
           {ACTIONS.flatMap((action, i) => [
             ...(i === 0 ? [] : [<Text key={`sep-${action.key}`} dimColor>{' · '}</Text>]),
             <Button
@@ -822,6 +884,25 @@ export const register: Register = (on, options) => {
               onPress={() => void $.prompt.submit({ text: action.prompt, asUser: true })}
             />,
           ])}
+          </Box>
+          {/* The repo's state, as words: "commit auto · push ask"; the label toggles, the word says which */}
+          {gitAuto && (
+            <Box>
+              {(['commit', 'push'] as const).flatMap((step, i) => [
+                ...(i === 0 ? [] : [<Text key={`tick-sep-${step}`} dimColor>{' · '}</Text>]),
+                <Button
+                  key={`tick-${step}`}
+                  plain
+                  dimColor
+                  label={step}
+                  onPress={() => void toggleGitAuto($, step)}
+                />,
+                <Text key={`tick-state-${step}`} color={gitAuto[step] ? COLORS.ok : COLORS.warn}>
+                  {gitAuto[step] ? ' auto' : ' ask'}
+                </Text>,
+              ])}
+            </Box>
+          )}
         </Box>
       </Box>
     )

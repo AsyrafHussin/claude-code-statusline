@@ -59,6 +59,8 @@ export type Snapshot = {
   limits: Limit[]
   // Subagents running right now
   agents: number
+  // The repo's switches: whether Claude may commit, and push, without asking; null outside a repo
+  gitAuto: { commit: boolean; push: boolean } | null
 }
 
 // Kept in $.store across sessions: spend per day, and each session's last reading
