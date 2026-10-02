@@ -633,12 +633,24 @@ async function searchSpotify($: EngineInterface, query: string) {
   )
 }
 
-// Plays a found track in the Spotify app (launching it if it is not running: the person asked), then
-// closes the dialog and reads the new state
+// Plays a found track in the Spotify app (launching it if it is not running: the person asked), keeping
+// the terminal in front, then closes the dialog and reads the new state
 async function playFound($: EngineInterface, track: FoundTrack) {
   const uri = safeTrackUri(track.uri)
   if (uri === null) return
-  await $.process.run(['osascript', '-e', `tell application "Spotify" to play track "${uri}"`], { timeoutMs: 8000 }).catch(() => null)
+  // play track brings Spotify to the front, so the app that was in front (the terminal) is put back
+  await $.process
+    .run(
+      [
+        'osascript',
+        '-e', 'set frontApp to path to frontmost application as text',
+        '-e', `tell application "Spotify" to play track "${uri}"`,
+        '-e', 'delay 0.4',
+        '-e', 'tell application frontApp to activate',
+      ],
+      { timeoutMs: 8000 },
+    )
+    .catch(() => null)
   await $.ui.close({ id: SEARCH_PANE })
   await readSpotify($)
 }
