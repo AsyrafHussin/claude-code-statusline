@@ -3,7 +3,6 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   aliasSteps,
   barCells,
-  barColumn,
   cleanCommitMessage,
   gitGuide,
   dayLabel,
@@ -16,6 +15,7 @@ import {
   withoutDataHeredocs,
   looseGitSteps,
   parsePlainGit,
+  addPlayed,
   parseSpotify,
   pixelsToCells,
   readBmp,
@@ -362,7 +362,7 @@ describe('git guide', () => {
 describe('spotify', () => {
   const S = '\x1f'
   test('reads what is playing', () => {
-    const text = ['playing', 'Bohemian Rhapsody', 'Queen', 'A Night at the Opera', '354000', '61,5', 'https://i.scdn.co/image/x', 'spotify:track:1'].join(S)
+    const text = ['playing', 'Bohemian Rhapsody', 'Queen', 'A Night at the Opera', '354000', '61,5', 'https://i.scdn.co/image/x', 'spotify:track:1', 'true', 'false', '65'].join(S)
     expect(parseSpotify(`${text}\n`)).toEqual({
       isPlaying: true,
       name: 'Bohemian Rhapsody',
@@ -372,9 +372,20 @@ describe('spotify', () => {
       positionMs: 61500,
       artUrl: 'https://i.scdn.co/image/x',
       trackId: 'spotify:track:1',
+      isShuffling: true,
+      isRepeating: false,
+      volume: 65,
     })
     expect(parseSpotify(['stopped', '', '', '', '0', '0', '', ''].join(S))).toBe(null)
     expect(parseSpotify('')).toBe(null)
+  })
+
+  test('keeps recently played tracks newest first, each once', () => {
+    const a = { trackId: 'a', name: 'A', artist: 'X', at: 1 }
+    const b = { trackId: 'b', name: 'B', artist: 'Y', at: 2 }
+    expect(addPlayed([a], b).map(t => t.trackId)).toEqual(['b', 'a'])
+    expect(addPlayed([b, a], { ...a, at: 3 }).map(t => t.trackId)).toEqual(['a', 'b'])
+    expect(addPlayed([a, b], { trackId: 'c', name: 'C', artist: 'Z', at: 4 }, 2).map(t => t.trackId)).toEqual(['c', 'a'])
   })
 
   test('formats a clock', () => {
@@ -410,13 +421,3 @@ describe('spotify', () => {
     expect([...words]).toEqual([0x2580, 0x112233, 0x445566])
   })
 })
-
-describe('week chart', () => {
-  test('a bar in eighths, top row first', () => {
-    expect(barColumn(24, 24, 3)).toEqual(['█', '█', '█'])
-    expect(barColumn(12, 24, 3)).toEqual([' ', '▄', '█'])
-    expect(barColumn(0, 24, 3)).toEqual([' ', ' ', ' '])
-    expect(barColumn(0.01, 24, 3)).toEqual([' ', ' ', '▁'])
-  })
-})
-

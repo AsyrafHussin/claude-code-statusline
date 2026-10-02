@@ -5,6 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import { ART_COLUMNS, ART_ROWS, drawBand } from './band'
+import type { MusicCommand } from './band'
 import type { Action } from './band'
 import {
   aliasSteps,
@@ -16,6 +17,7 @@ import {
   looseGitSteps,
   parsePlainGit,
   parseShortstat,
+  addPlayed,
   parseSpotify,
   pixelsToCells,
   readBmp,
@@ -28,7 +30,7 @@ import {
   shiftDay,
   sumDays,
 } from './logic'
-import type { GitStep } from './logic'
+import type { GitStep, PlayedTrack } from './logic'
 import { drawHistoryPane, historyText } from './pane'
 import { GIT_TIMEOUT, LIMIT_LABELS, REVIEW, runtime } from './state'
 import type { GitAuto } from './state'
@@ -375,10 +377,6 @@ async function readAndDraw($: EngineInterface) {
       rolling: sumDays(tokenLedger?.days ?? {}, since, day),
     },
     rollingUsd: ledger ? sumDays(ledger.days, since, day) : null,
-    week: Array.from({ length: 7 }, (_, i) => {
-      const d = shiftDay(day, i - 6)
-      return { day: d, usd: ledger?.days[d] ?? 0, tokens: tokenLedger?.days[d] ?? 0 }
-    }),
     limits,
     agents: agents.filter(a => a.status === 'running').length,
   }
@@ -479,7 +477,7 @@ const SPOTIFY_SCRIPT = `if application "Spotify" is running then
     if s is "stopped" then return "stopped"
     set t to current track
     set sep to ASCII character 31
-    return s & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (duration of t) & sep & (player position as string) & sep & (artwork url of t) & sep & (id of t)
+    return s & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (duration of t) & sep & (player position as string) & sep & (artwork url of t) & sep & (id of t) & sep & (shuffling as string) & sep & (repeating as string) & sep & (sound volume as string)
   end tell
 end if
 return ""`
@@ -512,20 +510,43 @@ async function readArt($: EngineInterface, url: string, trackId: string) {
   return cells
 }
 
+// Tracks heard, kept across sessions: each is added when the next one starts
+const RECENT_KEY = 'spotify-recent-v1'
+const RECENT_SHOWN = 3
+
 async function readSpotify($: EngineInterface) {
   const ran = await $.process.run(['osascript', '-e', SPOTIFY_SCRIPT], { timeoutMs: 4000 }).catch(() => null)
   const playing = ran?.exitCode === 0 ? parseSpotify(ran.stdout) : null
+  const before = await read($, music)
   if (playing === null) {
-    if ((await read($, music)) !== null) await update($, music, () => null)
+    if (before !== null) await update($, music, () => null)
     return
   }
+  let recent = before?.recent ?? ((await $.store.get(RECENT_KEY)) as PlayedTrack[] | undefined) ?? []
+  // A new track: the one before goes to the top of "recently played"
+  if (before !== null && before.trackId !== playing.trackId) {
+    recent = addPlayed(recent, { trackId: before.trackId, name: before.name, artist: before.artist, at: await $.clock.now() })
+    await $.store.set(RECENT_KEY, recent)
+  }
   const art = playing.artUrl ? await readArt($, playing.artUrl, playing.trackId) : null
-  await update($, music, () => ({ ...playing, art }))
+  await update($, music, () => ({ ...playing, art, recent: recent.filter(t => t.trackId !== playing.trackId).slice(0, RECENT_SHOWN) }))
 }
 
-// Play or pause, the next track or the one before, then read the state again at once
-async function controlSpotify($: EngineInterface, command: 'playpause' | 'next track' | 'previous track') {
-  await $.process.run(['osascript', '-e', `tell application "Spotify" to ${command}`], { timeoutMs: 4000 }).catch(() => null)
+// The controls under the band, each one AppleScript line to Spotify; then the state is read again at once
+const SPOTIFY_COMMANDS: Record<MusicCommand, string> = {
+  playpause: 'playpause',
+  next: 'next track',
+  previous: 'previous track',
+  shuffle: 'set shuffling to not shuffling',
+  repeat: 'set repeating to not repeating',
+  louder: 'set sound volume to ((sound volume) + 10)',
+  quieter: 'set sound volume to ((sound volume) - 10)',
+  open: 'activate',
+}
+
+async function controlSpotify($: EngineInterface, command: MusicCommand) {
+  const line = SPOTIFY_COMMANDS[command]
+  await $.process.run(['osascript', '-e', `tell application "Spotify" to ${line}`], { timeoutMs: 4000 }).catch(() => null)
   await readSpotify($)
 }
 

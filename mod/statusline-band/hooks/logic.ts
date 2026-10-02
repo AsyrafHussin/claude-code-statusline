@@ -384,10 +384,14 @@ export type NowPlaying = {
   positionMs: number
   artUrl: string
   trackId: string
+  isShuffling: boolean
+  isRepeating: boolean
+  // 0 to 100
+  volume: number
 }
 
 export const parseSpotify = (text: string): NowPlaying | null => {
-  const [state, name = '', artist = '', album = '', duration = '0', position = '0', artUrl = '', trackId = ''] = text
+  const [state, name = '', artist = '', album = '', duration = '0', position = '0', artUrl = '', trackId = '', shuffling = '', repeating = '', volume = '0'] = text
     .replace(/\n$/, '')
     .split('\x1f')
   if (state !== 'playing' && state !== 'paused') return null
@@ -402,8 +406,18 @@ export const parseSpotify = (text: string): NowPlaying | null => {
     positionMs: Math.round((Number(position.replace(',', '.')) || 0) * 1000),
     artUrl,
     trackId,
+    isShuffling: shuffling === 'true',
+    isRepeating: repeating === 'true',
+    volume: Math.min(100, Math.max(0, Number(volume) || 0)),
   }
 }
+
+// A track heard, for the band's "recently played": what it was and when it stopped playing
+export type PlayedTrack = { trackId: string; name: string; artist: string; at: number }
+
+// The list after a track has played: newest first, no track twice in a row, at most `keep`
+export const addPlayed = (list: PlayedTrack[], track: PlayedTrack, keep = 20) =>
+  [track, ...list.filter(t => t.trackId !== track.trackId)].slice(0, keep)
 
 // Milliseconds as "3:07", or "1:02:07" past an hour
 export const formatClock = (ms: number) => {
@@ -495,16 +509,4 @@ export const pixelsToCells = (picture: { width: number; height: number; pixels: 
     }
   }
   return toBase64(new Uint8Array(words.buffer))
-}
-
-// One bar of a small chart, top row first: `rows` cells tall, each cell in eighths (▁ to █), so a bar
-// three rows tall has 24 steps. Any value above zero shows at least the lowest step
-const EIGHTHS = '▁▂▃▄▅▆▇█'
-export const barColumn = (value: number, most: number, rows: number) => {
-  const steps = rows * 8
-  const height = value <= 0 || most <= 0 ? 0 : Math.max(1, Math.round((value / most) * steps))
-  return Array.from({ length: rows }, (_, i) => {
-    const level = Math.min(8, Math.max(0, height - (rows - 1 - i) * 8))
-    return level === 0 ? ' ' : EIGHTHS[level - 1] ?? '█'
-  })
 }

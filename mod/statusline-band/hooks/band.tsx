@@ -6,14 +6,13 @@ import {
   BAR_CELLS,
   WINDOW_MS,
   barCells,
-  barColumn,
-  dayLabel,
   formatClock,
   formatDuration,
   formatReset,
   formatTokens,
   formatUsd,
   perHour,
+  pixelsToCells,
   runsOutIn,
   shirtText,
 } from './logic'
@@ -25,15 +24,40 @@ import type { Limit, Mood, Music, Snapshot, TurnTokens } from '../types'
 // The elements the band draws with, as $.ui.resolve gives them; Raster only on the terminal
 export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & Partial<Pick<Elements['terminal'], 'Raster'>>
 
-// The album art's box, in cells: each cell shows two pixels, so the picture is 10 by 10
-export const ART_COLUMNS = 10
-export const ART_ROWS = 5
+// The album art's box, in cells: each cell shows two pixels, so the picture is 14 by 14
+export const ART_COLUMNS = 14
+export const ART_ROWS = 7
 const SPOTIFY_GREEN = '#1db954'
-const PROGRESS_CELLS = 28
-// The week chart's bars, in rows of eighths
-const WEEK_ROWS = 3
+const PROGRESS_CELLS = 30
+// Where "recently played" fits beside the track; below this width it is left out
+const RECENT_WIDTH = 38
+// The Spotify mark, 14 by 14, drawn by hand from the app's icon so its three arcs stay clear at this size:
+// G is the green disc, K the dark arcs, . the terminal's own background
+const SPOTIFY_MARK = [
+  '....GGGGGG....',
+  '...GGGGGGGG...',
+  '..GGGGGGGGGG..',
+  '.GGGGGGGGGGGG.',
+  'GGKKKKKKKKKGGG',
+  'GKKGGGGGGGGKKG',
+  'GGGGGGGGGGGGGG',
+  'GGGKKKKKKKKGGG',
+  'GGKGGGGGGGGKGG',
+  'GGGGGGGGGGGGGG',
+  '.GGGKKKKKKGGG.',
+  '..GGGGGGGGGG..',
+  '...GGGGGGGG...',
+  '....GGGGGG....',
+]
+// 0x01000000 is the terminal's own color, so the corners take whatever is behind the band
+const MARK_PIXELS = { G: 0x1ed760, K: 0x121418, '.': 0x01000000 } as Record<string, number>
+const SPOTIFY_MARK_CELLS = pixelsToCells(
+  { width: 14, height: 14, pixels: SPOTIFY_MARK.join('').split('').map(c => MARK_PIXELS[c] ?? 0x01000000) },
+  14,
+  7,
+)
 
-export type MusicCommand = 'playpause' | 'next track' | 'previous track'
+export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open'
 
 // A button under the card: most send a prompt as if typed; one with no prompt runs itself (quick commit)
 export type Action = { key: string; label: string; hotkey: string; prompt?: string }
@@ -347,74 +371,71 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
       ))}
     </Box>
   )
-  // Spotify: the album art as pixels (where the surface can draw them) beside a column of five rows, the
-  // Spotify mark, the track, artist and album, a progress bar with the time, and the controls
+  // Spotify, seven rows tall: the album art; the track, artist, album, progress and controls; the tracks
+  // heard before it; and the Spotify mark, so the row sits even from end to end
   const drawMusic = (m: Music) => {
     const filled = m.durationMs > 0 ? Math.min(PROGRESS_CELLS, Math.round((m.positionMs / m.durationMs) * PROGRESS_CELLS)) : 0
     const time = `${formatClock(m.positionMs)} / ${formatClock(m.durationMs)}`
+    const canDraw = view.canDrawArt && Raster !== undefined
+    const showRecent = total >= ART_COLUMNS * 2 + PROGRESS_CELLS + RECENT_WIDTH + 30
+    const toggle = (key: MusicCommand, label: string, isOn: boolean) => (
+      <Button key={`music-${key}`} plain dimColor={!isOn} label={label} onPress={() => view.onMusic(key)} />
+    )
     return (
       <Box>
-        {view.canDrawArt && Raster && m.art ? (
+        {canDraw && m.art && Raster ? (
           <Box marginRight={2} flexShrink={0}>
             <Raster key="album-art" columns={ART_COLUMNS} rows={ART_ROWS} cells={m.art} />
           </Box>
         ) : null}
-        <Box flexDirection="column" width={PROGRESS_CELLS + time.length + 2}>
+        <Box flexDirection="column" width={PROGRESS_CELLS + time.length + 2} flexShrink={0}>
           <Text wrap="truncate">
-            <Text backgroundColor={SPOTIFY_GREEN} color="#000000" bold>{' ♫ Spotify '}</Text>
-            <Text color={SPOTIFY_GREEN}>{m.isPlaying ? '  playing' : '  paused'}</Text>
+            <Text color={SPOTIFY_GREEN} bold>{'Spotify'}</Text>
+            <Text dimColor>{m.isPlaying ? '  · playing' : '  · paused'}</Text>
           </Text>
           <Text wrap="truncate" bold>{m.name}</Text>
-          <Text wrap="truncate" dimColor>{[m.artist, m.album].filter(Boolean).join(' · ')}</Text>
+          <Text wrap="truncate">{m.artist}</Text>
+          <Text wrap="truncate" dimColor>{m.album}</Text>
           <Text wrap="truncate">
             <Text color={SPOTIFY_GREEN}>{'━'.repeat(filled)}</Text>
             <Text dimColor>{'━'.repeat(PROGRESS_CELLS - filled)}</Text>
             <Text dimColor>{`  ${time}`}</Text>
           </Text>
           <Box>
-            <Button key="music-prev" plain label="◀◀" onPress={() => view.onMusic('previous track')} />
-            <Text>{'    '}</Text>
+            <Button key="music-previous" plain label="◀◀" onPress={() => view.onMusic('previous')} />
+            <Text>{'   '}</Text>
             <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶ '} onPress={() => view.onMusic('playpause')} />
-            <Text>{'    '}</Text>
-            <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next track')} />
+            <Text>{'   '}</Text>
+            <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next')} />
+          </Box>
+          <Box>
+            {toggle('shuffle', 'shuffle', m.isShuffling)}
+            <Text dimColor>{' · '}</Text>
+            {toggle('repeat', 'repeat', m.isRepeating)}
+            <Text dimColor>{' · vol '}</Text>
+            <Button key="music-quieter" plain dimColor label="−" onPress={() => view.onMusic('quieter')} />
+            <Text>{` ${m.volume}% `}</Text>
+            <Button key="music-louder" plain dimColor label="+" onPress={() => view.onMusic('louder')} />
           </Box>
         </Box>
-      </Box>
-    )
-  }
-
-  // The last 7 days: the week's total, a bar of cost per day (today brightest), and each day's initials;
-  // five rows, as tall as the Spotify half
-  const week = s.week ?? []
-  const drawWeek = () => {
-    const most = Math.max(...week.map(d => d.usd), 0)
-    const usd = week.reduce((sum, d) => sum + d.usd, 0)
-    const tokens = week.reduce((sum, d) => sum + d.tokens, 0)
-    const bars = week.map(d => barColumn(d.usd, most, WEEK_ROWS))
-    const today = week.length - 1
-    return (
-      <Box flexDirection="column" flexShrink={0}>
-        <Text wrap="truncate">
-          <Text dimColor>{'last 7 days  '}</Text>
-          <Text color={COLORS.ok} bold>{formatUsd(usd)}</Text>
-          {tokens > 0 ? <Text color={COLORS.model}>{` ${formatTokens(tokens)}`}</Text> : null}
-        </Text>
-        {Array.from({ length: WEEK_ROWS }, (_, row) => (
-          <Text key={`week-row-${row}`}>
-            {bars.map((bar, i) => (
-              <Text key={`week-${row}-${i}`} color={i === today ? COLORS.ok : COLORS.branch} dimColor={i !== today}>
-                {`${(bar[row] ?? ' ').repeat(2)} `}
-              </Text>
+        {showRecent && (
+          <Box flexDirection="column" width={RECENT_WIDTH} marginLeft={3} flexShrink={0}>
+            <Text dimColor>{'recently played'}</Text>
+            {m.recent.length === 0 ? <Text dimColor>{'—'}</Text> : null}
+            {m.recent.map(t => (
+              <Box key={`recent-${t.trackId}`} flexDirection="column">
+                <Text wrap="truncate">{t.name}</Text>
+                <Text wrap="truncate" dimColor>{`${t.artist} · ${formatReset(Math.max(0, s.now - t.at))} ago`}</Text>
+              </Box>
             ))}
-          </Text>
-        ))}
-        <Text>
-          {week.map((d, i) => (
-            <Text key={`week-day-${d.day}`} dimColor={i !== today} bold={i === today}>
-              {`${dayLabel(d.day).slice(0, 2)} `}
-            </Text>
-          ))}
-        </Text>
+          </Box>
+        )}
+        <Box flexGrow={1} />
+        {canDraw && Raster ? (
+          <Box flexShrink={0} marginLeft={2}>
+            <Raster key="spotify-mark" columns={14} rows={7} cells={SPOTIFY_MARK_CELLS} />
+          </Box>
+        ) : null}
       </Box>
     )
   }
@@ -493,12 +514,12 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
           </Box>
         )}
       </Box>
-      {/* Under the actions, one row in two halves: Spotify on the left while it plays, the last 7 days on
-          the right; both five rows tall, so the row sits even */}
-      <Box marginLeft={CLAWD_WIDTH + CARD_INSET + 3} marginTop={1} width={total - 4} justifyContent="space-between">
-        {view.music ? drawMusic(view.music) : <Box />}
-        {week.length > 0 && drawWeek()}
-      </Box>
+      {/* Under the actions, while Spotify plays: its own row, from the album art to the Spotify mark */}
+      {view.music && (
+        <Box marginLeft={CLAWD_WIDTH + CARD_INSET + 3} marginTop={1} width={total - 4}>
+          {drawMusic(view.music)}
+        </Box>
+      )}
     </Box>
   )
 }
