@@ -81,7 +81,7 @@ export function drawSearchPane({ Box, Button, Text, Input }: Kit, view: SearchVi
   const found = view.status === 'found' && view.tracks.length > 0
   const count = found ? `${view.tracks.length} tracks` : view.status === 'searching' ? 'searching…' : ''
   return (
-    <Box flexDirection="column" paddingTop={1} paddingLeft={2} paddingRight={3}>
+    <Box flexDirection="column" paddingTop={1} paddingLeft={2}>
       <Box justifyContent="space-between">
         <Text color={SPOTIFY_GREEN} bold>{'● Spotify'}</Text>
         <Text dimColor>{count}</Text>
