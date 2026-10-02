@@ -11,6 +11,9 @@ const isBlinking = atom({ plugin: 'statusline-band', key: 'isBlinking' } as cons
 const LIMIT_LABELS: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }
 const RINGS = ['○', '◔', '◑', '◕', '●']
 const BAR_CELLS = 8
+const WINDOW_MS: Record<string, number> = { five_hour: 5 * 3_600_000, seven_day: 7 * 86_400_000 }
+// Too early in a window, one burst would read as a runaway pace
+const PACE_MIN_ELAPSED = 0.05
 const ALERT_THRESHOLDS = [80, 95]
 const COMPACT_AT = 80
 const LEDGER_DAYS = 62
@@ -88,6 +91,16 @@ const formatReset = (ms: number) => {
   return `${mins}m`
 }
 
+// How long until a window runs out at the pace used so far, when that comes before its reset
+const runsOutIn = (kind: string, pct: number, resetMs: number) => {
+  const windowMs = WINDOW_MS[kind]
+  if (windowMs === undefined || pct <= 0 || pct >= 100) return undefined
+  const elapsed = windowMs - resetMs
+  if (elapsed < windowMs * PACE_MIN_ELAPSED) return undefined
+  const left = ((100 - pct) / pct) * elapsed
+  return left < resetMs ? left : undefined
+}
+
 // Filled cells for a percentage; any use at all shows at least one
 const barCells = (pct: number) => (pct <= 0 ? 0 : Math.min(BAR_CELLS, Math.max(1, Math.round((pct / 100) * BAR_CELLS))))
 
@@ -117,7 +130,7 @@ async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']
       : (await $.process.run(['git', '-C', cwd, 'rev-parse', '--short', 'HEAD'], GIT_TIMEOUT)).stdout.trim()
   if (!branch) return null
 
-  const [status, counts, diff, outgoing, top, stashes] = await Promise.all([
+  const [status, counts, diff, outgoing, top, stashes, last] = await Promise.all([
     $.process.run(['git', '-C', cwd, 'status', '--porcelain'], GIT_TIMEOUT),
     $.process.run(['git', '-C', cwd, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], GIT_TIMEOUT),
     $.process.run(['git', '-C', cwd, 'diff', '--shortstat', 'HEAD'], GIT_TIMEOUT),
@@ -125,6 +138,7 @@ async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']
     $.process.run(['git', '-C', cwd, 'diff', '--shortstat', '@{upstream}...HEAD'], GIT_TIMEOUT),
     $.process.run(['git', '-C', cwd, 'rev-parse', '--show-toplevel'], GIT_TIMEOUT),
     $.process.run(['git', '-C', cwd, 'stash', 'list'], GIT_TIMEOUT),
+    $.process.run(['git', '-C', cwd, 'log', '-1', '--format=%ct'], GIT_TIMEOUT),
   ])
   const lines = (shortstat: string) => ({
     added: Number(/(\d+) insertion/.exec(shortstat)?.[1] ?? 0),
@@ -151,6 +165,7 @@ async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']
     unpushedAdded: unpushed.added,
     unpushedRemoved: unpushed.removed,
     stashed,
+    lastCommitAt: last.exitCode === 0 && last.stdout.trim() ? Number(last.stdout.trim()) * 1000 : null,
   }
 }
 
@@ -361,6 +376,9 @@ export const register: Register = on => {
               : []),
             ...(g.behind > 0 ? [[{ text: `↓ ${g.behind} behind`, color: COLORS.hot }]] : []),
             ...(g.stashed > 0 ? [[{ text: `≡ ${g.stashed} stash`, color: COLORS.model }]] : []),
+            ...(g.lastCommitAt !== null
+              ? [[{ text: `committed ${s.now - g.lastCommitAt < 60_000 ? 'just now' : `${formatReset(s.now - g.lastCommitAt)} ago`}`, dim: true }]]
+              : []),
             ...(!g.hasUpstream ? [[{ text: 'no upstream', color: COLORS.warn }]] : []),
             ...(g.changed === 0 && g.hasUpstream && g.ahead === 0 && g.behind === 0
               ? [[{ text: '✓ synced', color: COLORS.ok }]]
@@ -448,14 +466,18 @@ export const register: Register = on => {
         const resetMs = l.resetsAt ? Date.parse(l.resetsAt) - s.now : 0
         const name = LIMIT_LABELS[l.kind] ?? l.kind
         if (resetMs <= 0) return stat(l.percent, name)
-        return stat(l.percent, `${name} · reset ${formatReset(resetMs)}`, l.resetsOn ? [{ text: ` (${l.resetsOn})`, dim: true }] : [])
+        const out = runsOutIn(l.kind, l.percent, resetMs)
+        return stat(l.percent, `${name} · reset ${formatReset(resetMs)}`, [
+          ...(l.resetsOn ? [{ text: ` (${l.resetsOn})`, dim: true }] : []),
+          ...(out !== undefined ? [{ text: ` ▲ out ~${formatReset(out)}`, color: COLORS.hot, bold: true }] : []),
+        ])
       }),
       ...(s.context
         ? [
             [
               { text: 'ctx ', dim: true },
-              { text: '▰'.repeat(barCells(s.context.percent)), color: toneHex(s.context.percent) },
-              { text: '▱'.repeat(BAR_CELLS - barCells(s.context.percent)), dim: true },
+              { text: '━'.repeat(barCells(s.context.percent)), color: toneHex(s.context.percent) },
+              { text: '━'.repeat(BAR_CELLS - barCells(s.context.percent)), dim: true },
               {
                 text: ` ${Math.round(s.context.percent)}%`,
                 bold: true,

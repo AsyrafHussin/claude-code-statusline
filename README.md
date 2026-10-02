@@ -14,7 +14,7 @@ A clean, informative status line for [Claude Code](https://docs.anthropic.com/en
 |---------|-------------|
 | **Project** | Current folder name (bold yellow) |
 | **Branch** | Git branch with status (magenta) |
-| **Git Status** | `synced` / `uncommitted` / `3 unpushed` / `2 behind` |
+| **Git Status** | Uncommitted files and lines, unpushed commits and lines, behind, stashes, time since the last commit |
 | **Model** | Current Claude model (cyan) |
 | **Duration** | Session duration (e.g., `20m22s`) |
 | **Date/Time** | Current date and time with AM/PM |
@@ -24,8 +24,8 @@ A clean, informative status line for [Claude Code](https://docs.anthropic.com/en
 | Segment | Description |
 |---------|-------------|
 | **ctx** | Context window usage with token count (e.g., `5% (128k/1.0m)`) |
-| **session** | 5-hour session rate limit with reset countdown |
-| **weekly** | 7-day all-models rate limit with reset countdown |
+| **session** | 5-hour session rate limit with reset countdown and local reset time |
+| **weekly** | 7-day all-models rate limit with reset countdown and local reset time; `! out ~7h` when the pace so far would use it up before the reset |
 
 All percentages are color-coded: **green** (< 50%), **yellow** (50-79%), **red** (80%+).
 
@@ -116,10 +116,12 @@ cd claude-code-statusline
 | Status | Color | Meaning |
 |--------|-------|---------|
 | `synced` | Green | Clean and up to date with remote |
-| `uncommitted` | Red | Uncommitted local changes |
-| `3 unpushed` | Yellow | 3 commits not pushed to remote |
-| `2 behind` | Red | Remote has 2 commits you haven't pulled |
-| `unpushed` | Yellow | No remote tracking branch |
+| `3 files +92 -47` | Yellow | 3 files with uncommitted changes, and their lines |
+| `↑3 commits +518` | Yellow | 3 commits not pushed to remote, and their lines |
+| `↓2 behind` | Red | Remote has 2 commits you haven't pulled |
+| `≡1 stash` | Cyan | Stashed changes waiting |
+| `no upstream` | Yellow | No remote tracking branch |
+| `committed 2h ago` | Dim | Time since the last commit |
 
 ## Mod: Panel Above the Prompt
 
@@ -127,17 +129,17 @@ cd claude-code-statusline
 
 ```
    ▐▛███▜▌    ╭─ ◆ claude-code-statusline ─ main ─ ✦ Opus 5.5 ─────────────────── $7.01 session $12.09/h · $9.06 today ─╮
-  ▝▜ A H ▛▘   │  ◑ 47% 5h · reset 1h1m (11:09 AM)  │  ● 94% 7d · reset 1d9h (Sat 8:00 PM)  │  ctx ▰▰▱▱▱▱▱▱ 24% 238k/1.0m  │
+  ▝▜ A H ▛▘   │  ◑ 47% 5h · reset 1h1m (11:09 AM)  │  ● 94% 7d · reset 1d9h (Sat 8:00 PM) ▲ out ~8h  │  ctx ━━━━━━━━ 24% 238k/1.0m  │
     ▘▘ ▝▝     ╰─ ✎ 2 files +57 −16 · ↑ 3 commits +518 ──────────────────────────────────── session 34m · 10:08 AM ─╯
 ```
 
 | Part | Description |
 |------|-------------|
 | **Top edge** | Repo name (with the subfolder dimmed when you're in one), branch, model; cost on the right |
-| **5h / 7d** | Rate limits as filling rings, with the reset countdown and the local reset time |
+| **5h / 7d** | Rate limits as filling rings, with the reset countdown and the local reset time; `▲ out ~8h` when the pace so far would use it up before the reset |
 | **ctx** | Context usage as a bar, with tokens used out of the window |
 | **Cost** | Session cost and hourly rate, plus today's and this month's spend across sessions |
-| **Bottom edge** | Uncommitted files and lines, unpushed commits and their lines, commits behind, stashes; then session duration and the time |
+| **Bottom edge** | Uncommitted files and lines, unpushed commits and their lines, commits behind, stashes, time since the last commit; then session duration and the time |
 | **Clawd** | Stands and blinks when idle, runs while Claude works; the border turns orange too |
 
 It fetches the upstream in the background every 5 minutes (never prompting for credentials) so `behind` stays current. It also toasts once when a rate limit passes 80% and 95%, and shows a `compact` button when context passes 80%.

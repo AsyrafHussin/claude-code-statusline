@@ -67,6 +67,53 @@ format_duration() {
   fi
 }
 
+# Seconds as "1d9h", "2h3m" or "5m"
+format_span() {
+  local secs=$1
+  if [ "$secs" -ge 86400 ]; then
+    printf "%dd%dh" $((secs/86400)) $(( (secs%86400)/3600 ))
+  elif [ "$secs" -ge 3600 ]; then
+    printf "%dh%dm" $((secs/3600)) $(( (secs%3600)/60 ))
+  else
+    printf "%dm" $((secs/60))
+  fi
+}
+
+# An epoch in local time: "11:10 AM" within a day, else "Sat 8:00 PM" (BSD date, then GNU)
+local_time() {
+  local epoch=$1 fmt="+%-I:%M %p"
+  [ $(( epoch - $(date +%s) )) -ge 86400 ] && fmt="+%a %-I:%M %p"
+  date -r "$epoch" "$fmt" 2>/dev/null || date -d "@$epoch" "$fmt" 2>/dev/null
+}
+
+# Lines added and removed from `git diff --shortstat`, as " +12 -4"
+shortstat_lines() {
+  local stat=$1 out="" added removed
+  added=$(printf "%s" "$stat" | sed -nE 's/.* ([0-9]+) insertion.*/\1/p')
+  removed=$(printf "%s" "$stat" | sed -nE 's/.* ([0-9]+) deletion.*/\1/p')
+  [ -n "$added" ] && out+=" ${GREEN}+${added}${RST}"
+  [ -n "$removed" ] && out+=" ${RED}-${removed}${RST}"
+  printf "%s" "$out"
+}
+
+# A rate limit: "95% resets 1d9h (Sat 8:00 PM)", warning when the pace so far
+# would use it up before the reset
+limit_hint() {
+  local pct=$1 reset=$2 window=$3 now diff elapsed left hint=""
+  [ -z "$reset" ] || [ "$reset" = "null" ] && return
+  now=$(date +%s)
+  diff=$(( reset - now ))
+  [ "$diff" -le 0 ] && return
+  hint=" ${DIM}resets $(format_span "$diff") ($(local_time "$reset"))${RST}"
+  elapsed=$(( window - diff ))
+  # Too early in a window, one burst would read as a runaway pace
+  if [ "$pct" -gt 0 ] && [ "$pct" -lt 100 ] && [ "$elapsed" -ge $(( window / 20 )) ]; then
+    left=$(( (100 - pct) * elapsed / pct ))
+    [ "$left" -lt "$diff" ] && hint+=" ${RED}${BOLD}! out ~$(format_span "$left")${RST}"
+  fi
+  printf "%s" "$hint"
+}
+
 sep="${DIM} | ${RST}"
 
 # ── LINE 1: Project + Git + Model + Session ──
@@ -78,29 +125,39 @@ if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
   branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
   has_remote=$(git -C "$cwd" rev-parse --verify "@{upstream}" 2>/dev/null)
 
-  # Check uncommitted changes
+  # Uncommitted files and their lines
   porcelain=$(git -C "$cwd" status --porcelain 2>/dev/null)
   dirty=""
   if [ -n "$porcelain" ]; then
-    dirty=" ${RED}uncommitted${RST}"
+    files=$(printf "%s\n" "$porcelain" | grep -c .)
+    [ "$files" -eq 1 ] && noun="file" || noun="files"
+    dirty=" ${YELLOW}${files} ${noun}${RST}$(shortstat_lines "$(git -C "$cwd" diff --shortstat HEAD 2>/dev/null)")"
   fi
 
-  # Check push status
+  # Commits to push (with their lines) and to pull
   push_status=""
   if [ -z "$has_remote" ]; then
-    push_status=" ${YELLOW}unpushed${RST}"
+    push_status=" ${YELLOW}no upstream${RST}"
   else
     ahead=$(git -C "$cwd" rev-list --count "@{upstream}..HEAD" 2>/dev/null || echo "0")
     behind=$(git -C "$cwd" rev-list --count "HEAD..@{upstream}" 2>/dev/null || echo "0")
-    if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
-      push_status=" ${YELLOW}+${ahead}/-${behind}${RST}"
-    elif [ "$ahead" -gt 0 ]; then
-      push_status=" ${YELLOW}${ahead} unpushed${RST}"
-    elif [ "$behind" -gt 0 ]; then
-      push_status=" ${RED}${behind} behind${RST}"
-    elif [ -z "$dirty" ]; then
+    if [ "$ahead" -gt 0 ]; then
+      [ "$ahead" -eq 1 ] && noun="commit" || noun="commits"
+      push_status+=" ${YELLOW}↑${ahead} ${noun}${RST}$(shortstat_lines "$(git -C "$cwd" diff --shortstat "@{upstream}...HEAD" 2>/dev/null)")"
+    fi
+    [ "$behind" -gt 0 ] && push_status+=" ${RED}↓${behind} behind${RST}"
+    if [ -z "$dirty" ] && [ "$ahead" -eq 0 ] && [ "$behind" -eq 0 ]; then
       push_status=" ${GREEN}synced${RST}"
     fi
+  fi
+
+  stashes=$(git -C "$cwd" stash list 2>/dev/null | grep -c .)
+  [ "$stashes" -gt 0 ] && push_status+=" ${CYAN}≡${stashes} stash${RST}"
+
+  # How long since the last commit
+  last_commit=$(git -C "$cwd" log -1 --format=%ct 2>/dev/null)
+  if [ -n "$last_commit" ]; then
+    push_status+=" ${DIM}committed $(format_span $(( $(date +%s) - last_commit ))) ago${RST}"
   fi
   line1+="${sep}${MAGENTA}${branch}${RST}${dirty}${push_status}"
 fi
@@ -138,20 +195,7 @@ fi
 if [ -n "$five_h" ] && [ "$five_h" != "null" ]; then
   printf -v five_int "%.0f" "$five_h"
   five_c=$(pct_color "$five_int")
-  reset_hint=""
-  if [ -n "$five_h_reset" ] && [ "$five_h_reset" != "null" ]; then
-    now=$(date +%s)
-    diff=$(( five_h_reset - now ))
-    if [ "$diff" -gt 0 ]; then
-      reset_h=$(( diff / 3600 ))
-      reset_m=$(( (diff % 3600) / 60 ))
-      if [ "$reset_h" -gt 0 ]; then
-        reset_hint=" ${DIM}resets ${reset_h}h${reset_m}m${RST}"
-      else
-        reset_hint=" ${DIM}resets ${reset_m}m${RST}"
-      fi
-    fi
-  fi
+  reset_hint=$(limit_hint "$five_int" "$five_h_reset" 18000)
   [ -n "$line2" ] && line2+="${sep}"
   line2+="${DIM}session${RST} ${five_c}${five_int}%${RST}${reset_hint}"
 fi
@@ -160,23 +204,7 @@ fi
 if [ -n "$seven_d" ] && [ "$seven_d" != "null" ]; then
   printf -v seven_int "%.0f" "$seven_d"
   seven_c=$(pct_color "$seven_int")
-  weekly_reset_hint=""
-  if [ -n "$seven_d_reset" ] && [ "$seven_d_reset" != "null" ]; then
-    now=$(date +%s)
-    diff=$(( seven_d_reset - now ))
-    if [ "$diff" -gt 0 ]; then
-      reset_days=$(( diff / 86400 ))
-      reset_h=$(( (diff % 86400) / 3600 ))
-      reset_m=$(( (diff % 3600) / 60 ))
-      if [ "$reset_days" -gt 0 ]; then
-        weekly_reset_hint=" ${DIM}resets ${reset_days}d${reset_h}h${RST}"
-      elif [ "$reset_h" -gt 0 ]; then
-        weekly_reset_hint=" ${DIM}resets ${reset_h}h${reset_m}m${RST}"
-      else
-        weekly_reset_hint=" ${DIM}resets ${reset_m}m${RST}"
-      fi
-    fi
-  fi
+  weekly_reset_hint=$(limit_hint "$seven_int" "$seven_d_reset" 604800)
   [ -n "$line2" ] && line2+="${sep}"
   line2+="${DIM}weekly${RST} ${seven_c}${seven_int}%${RST}${weekly_reset_hint}"
 fi

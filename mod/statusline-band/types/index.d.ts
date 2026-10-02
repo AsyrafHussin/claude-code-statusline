@@ -17,6 +17,8 @@ export type Snapshot = {
     unpushedAdded: number
     unpushedRemoved: number
     stashed: number
+    // Epoch ms of the last commit, null in a repo with none
+    lastCommitAt: number | null
   } | null
   model: string
   startedAt: number
