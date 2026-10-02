@@ -223,6 +223,11 @@ export const looseGitSteps = (command: string): GitStep[] => {
   return [...steps]
 }
 
+// Whether a command may point git at a repo other than the session's: a cd or pushd, -C, --git-dir,
+// --work-tree, or GIT_DIR / GIT_WORK_TREE. Only for a command that is not plain, whose repo is uncertain
+export const mayNameAnotherRepo = (command: string) =>
+  /(?:^|[\s;&|(])(?:cd|pushd)\s|(?:^|\s)-C\s|--git-dir|--work-tree|\bGIT_DIR\b|\bGIT_WORK_TREE\b/.test(command)
+
 // What the switches make of a command: allow a plain one whose every step is on auto, ask for any other
 // that takes a git step, and pass the rest to the usual permissions
 export const gitDecision = (

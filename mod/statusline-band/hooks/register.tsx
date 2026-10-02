@@ -15,6 +15,7 @@ import {
   gitGuide,
   gitDecision,
   looseGitSteps,
+  mayNameAnotherRepo,
   parsePlainGit,
   perHour,
   placeFolder,
@@ -716,8 +717,9 @@ export const register: Register = (on, options) => {
     const auto = plain !== null && root !== null ? await readGitAuto($, root) : REVIEW
     const decision = gitDecision(plain, loose, auto)
     if (decision === 'pass') return below
-    // Under bypass, the person chose no prompts: only a switch they set to ask still asks
-    if (decision === 'ask' && permissionMode === 'bypassPermissions') {
+    // Under bypass, the person chose no prompts: only a switch they set to ask still asks. A command that
+    // is not plain and may name another repo still asks, since the switches read here are the session's
+    if (decision === 'ask' && permissionMode === 'bypassPermissions' && !(plain === null && mayNameAnotherRepo(command))) {
       const repoAuto = root !== null ? await readGitAuto($, root) : REVIEW
       if ((plain?.steps ?? loose).every(step => repoAuto[step])) return below
     }

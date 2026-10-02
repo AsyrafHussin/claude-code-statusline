@@ -9,6 +9,7 @@ import {
   formatTokens,
   gitDecision,
   looseGitSteps,
+  mayNameAnotherRepo,
   parsePlainGit,
   placeFolder,
   prettyModel,
@@ -199,6 +200,15 @@ describe('git switches', () => {
     expect(decide('git status && git diff --stat', none)).toBe('pass')
     expect(decide('git diff --output=/tmp/o && git push', all)).toBe('ask')
     expect(decide('git log --ext-diff && git push', all)).toBe('ask')
+  })
+
+  test('tells when a command may point git at another repo', () => {
+    for (const command of ['cd /repo-kerja && git push', 'git push; cd /x', 'pushd /x && git push', 'R=/x; git -C $R push', 'git --git-dir=/x/.git push', 'GIT_DIR=/x/.git git push']) {
+      expect(mayNameAnotherRepo(command)).toBe(true)
+    }
+    for (const command of ['git push', 'git commit -F - && git push', 'git push origin main']) {
+      expect(mayNameAnotherRepo(command)).toBe(false)
+    }
   })
 
   test('a repo path is absolute and plain, the same for every step', () => {
