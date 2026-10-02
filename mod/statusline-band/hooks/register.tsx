@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import {
   BAR_CELLS,
+  cleanCommitMessage,
   DEFAULTS,
   WINDOW_MS,
   barCells,
@@ -11,6 +12,7 @@ import {
   formatReset,
   formatTokens,
   formatUsd,
+  gitGuide,
   gitDecision,
   looseGitSteps,
   parsePlainGit,
@@ -47,8 +49,11 @@ const COMPACT_AT = 80
 const LEDGER_DAYS = 62
 // The pane with each day's cost and tokens, opened by /usage-history or the "30d" label
 const HISTORY_PANE = 'usage-history'
-// Buttons under the card, each sending a prompt as if typed; while Claude works it waits its turn
-const ACTIONS = [
+// Buttons under the card: most send a prompt as if typed (while Claude works it waits its turn);
+// quick commit runs itself, with the small model writing the message
+// A prompt to send, or (quick commit) none: that one runs itself
+type Action = { key: string; label: string; hotkey: string; prompt?: string }
+const ACTIONS: Action[] = [
   {
     key: 'push',
     label: 'push',
@@ -73,6 +78,11 @@ const ACTIONS = [
     label: 'summarize',
     hotkey: '4',
     prompt: 'Summarize what we changed in this session in a few short lines.',
+  },
+  {
+    key: 'quick-commit',
+    label: 'quick commit',
+    hotkey: '5',
   },
 ]
 const HISTORY_BAR = 30
@@ -116,8 +126,8 @@ const CLAWD_CHEER = [
   { arms: ['▘', '▝'], legs: '  ▘▘ ▝▝  ' },
   { arms: ['▘', '▝'], legs: ' ▘ ▘ ▝ ▝ ' },
 ]
-// Room left for the band's own collapse mark ([-]) on the right, with a margin
-const ENGINE_MARK_WIDTH = 8
+// Room left for the band's own collapse mark ([-], three columns) on the right, with one to spare
+const ENGINE_MARK_WIDTH = 4
 const RUNNER_TICK_MS = 120
 // Columns of card left and right of the frame
 const CARD_INSET = 1
@@ -147,6 +157,8 @@ let hasTimers = false
 // When the person last did something, and until when Clawd cheers; both start over on a reload
 let lastActiveAt: number | null = null
 let cheerUntil = 0
+// Uncommitted files when the turn began, so its end can tell whether the turn changed any
+let changedAtStart = 0
 
 // The refresh and blink timers, started in session.start so they outlive any one event.
 // The other hooks call it too, for a hot reload, which starts the module over without one
@@ -195,6 +207,108 @@ async function toggleGitAuto($: EngineInterface, step: GitStep) {
   const next = { ...REVIEW, ...all[root], [step]: !(all[root]?.[step] ?? false) }
   await $.store.set(GIT_AUTO_KEY, { ...all, [root]: next })
   await update($, snap, was => (was ? { ...was, gitAuto: next } : was))
+}
+
+// What a git step is about to take with it, for the line under its dialog:
+// "✎ 2 files +12 −4" for a commit, "↑ 3 commits +518 −20 to origin/main" for a push
+async function pendingSummary($: EngineInterface, root: string, steps: GitStep[]) {
+  const git = (...args: string[]) => $.process.run(['git', '-C', root, ...args], GIT_TIMEOUT).catch(() => null)
+  const lines = (stat: string) => {
+    const added = /(\d+) insertion/.exec(stat)?.[1]
+    const removed = /(\d+) deletion/.exec(stat)?.[1]
+    return `${added ? ` +${added}` : ''}${removed ? ` −${removed}` : ''}`
+  }
+  const parts: string[] = []
+  if (steps.includes('commit')) {
+    const [status, diff] = await Promise.all([git('status', '--porcelain'), git('diff', '--shortstat', 'HEAD')])
+    const files = (status?.stdout ?? '').split('\n').filter(row => row.trim() !== '').length
+    if (files > 0) parts.push(`✎ ${files} ${files === 1 ? 'file' : 'files'}${lines(diff?.stdout ?? '')}`)
+  }
+  if (steps.includes('push')) {
+    const [upstream, count, diff] = await Promise.all([
+      git('rev-parse', '--abbrev-ref', '@{upstream}'),
+      git('rev-list', '--count', '@{upstream}..HEAD'),
+      git('diff', '--shortstat', '@{upstream}...HEAD'),
+    ])
+    const ahead = Number(count?.stdout.trim() ?? 0)
+    if (upstream?.exitCode === 0 && ahead > 0) {
+      parts.push(`↑ ${ahead} ${ahead === 1 ? 'commit' : 'commits'}${lines(diff?.stdout ?? '')} to ${upstream.stdout.trim()}`)
+    } else if (upstream?.exitCode !== 0) {
+      parts.push('↑ a branch with no upstream yet')
+    }
+  }
+  return parts.join(' · ')
+}
+
+// Commits everything in the session's repo with a message the small model writes from the diff, after
+// the person reads it: commit, commit and push, or type their own. It runs git itself, on that press,
+// so it costs the main model nothing
+async function quickCommit($: EngineInterface) {
+  const root = (await read($, snap))?.git?.root
+  if (!root) {
+    $.ui.toast('Not in a git repo')
+    return
+  }
+  const git = (...args: string[]) => $.process.run(['git', '-C', root, ...args], { timeoutMs: 30_000 })
+  const status = await git('status', '--porcelain')
+  const files = status.stdout.split('\n').filter(row => row.trim() !== '')
+  if (files.length === 0) {
+    $.ui.toast('Nothing to commit')
+    return
+  }
+  $.ui.toast('✎  Writing a commit message…')
+  const [diff, log] = await Promise.all([git('diff', 'HEAD'), git('log', '-5', '--format=%s')])
+  const untracked = files.filter(row => row.startsWith('??')).map(row => row.slice(3))
+  const written = await $.model.complete({
+    model: 'haiku',
+    maxTokens: 400,
+    system:
+      'You write git commit messages. Reply with the message alone: a subject line under 72 characters in the style of the recent subjects, a blank line, then a short body saying what changed and why. No code fences, no quotes, no apostrophes, and no line crediting anyone.',
+    prompt: [
+      `Recent subjects:\n${log.stdout.trim()}`,
+      untracked.length > 0 ? `New files:\n${untracked.join('\n')}` : '',
+      `Diff:\n${diff.stdout.slice(0, 24_000)}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+  })
+  if (!written.isAnswered) {
+    $.ui.toast(`Could not write a message (${written.reason})`)
+    return
+  }
+  const proposed = cleanCommitMessage(written.text)
+  const COMMIT = 'Commit'
+  const PUSH = 'Commit and push'
+  const CANCEL = 'Cancel'
+  const answer = await $.ui
+    .ask(`Commit ${files.length} ${files.length === 1 ? 'file' : 'files'} with this message? (or type your own)\n\n${proposed}`, {
+      options: [COMMIT, PUSH, CANCEL],
+      header: 'Commit',
+    })
+    .catch(() => CANCEL)
+  if (answer === CANCEL) return
+  const message = answer === COMMIT || answer === PUSH ? proposed : cleanCommitMessage(answer)
+  if (!message) return
+  const added = await git('add', '-A')
+  const committed = added.exitCode === 0 ? await git('commit', '-q', '-m', message) : added
+  if (committed.exitCode !== 0) {
+    $.ui.toast(`Commit failed: ${(committed.stderr || committed.stdout).trim().split('\n')[0] ?? ''}`)
+    return
+  }
+  if (answer === PUSH) {
+    const pushed = await git('push')
+    $.ui.toast(pushed.exitCode === 0 ? '✓  Committed and pushed' : `Committed, but the push failed: ${pushed.stderr.trim().split('\n')[0] ?? ''}`)
+  } else {
+    $.ui.toast('✓  Committed')
+  }
+  void refresh($)
+}
+
+// After a turn that changed files, offers "commit and push" in the empty prompt box, for Tab to take
+async function suggestAfterTurn($: EngineInterface) {
+  await refresh($)
+  const changed = (await read($, snap))?.git?.changed ?? 0
+  if (changed > 0 && changed !== changedAtStart) await $.prompt.suggest({ text: 'commit and push' }).catch(() => undefined)
 }
 
 // The root of the repo a folder is in, or null outside one
@@ -469,13 +583,18 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: HISTORY_PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
     const days = await read($, history)
     const most = Math.max(0.01, ...days.map(d => d.usd))
     const usd = days.reduce((sum, d) => sum + d.usd, 0)
     const tokens = days.reduce((sum, d) => sum + d.tokens, 0)
     // The newest days when the pane is too short for all of them
-    const room = Math.max(1, (e.viewport?.rows ?? 40) - 5)
+    const room = Math.max(1, (e.viewport?.rows ?? 40) - 7)
+    // The same table as plain text, for the clipboard
+    const asText = [
+      ...days.map(d => `${dayLabel(d.day)}  ${formatUsd(d.usd).padStart(7)}  ${(d.tokens > 0 ? formatTokens(d.tokens) : '-').padStart(6)}`),
+      `${config.rollingDays} days  ${formatUsd(usd)} · ${formatTokens(tokens)} tokens`,
+    ].join('\n')
 
     return (
       <Box flexDirection="column">
@@ -499,6 +618,18 @@ export const register: Register = (on, options) => {
           <Text color={COLORS.model}>{formatTokens(tokens)}</Text>
           <Text dimColor>{' tokens, counted from when the mod was installed'}</Text>
         </Text>
+        <Text> </Text>
+        <Button
+          key="copy-history"
+          plain
+          dimColor
+          label="copy as text"
+          onPress={press =>
+            void $.ui.copy({ text: asText, surface: press.surface }).then(copied =>
+              $.ui.toast(copied.isCopied ? '✓  Copied' : 'Could not copy'),
+            )
+          }
+        />
       </Box>
     )
   })
@@ -506,6 +637,7 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     startTimers($)
     await markActive($)
+    changedAtStart = (await read($, snap))?.git?.changed ?? 0
     if (runner === null) {
       let ticks = 0
       const timer = $.clock.every(RUNNER_TICK_MS, () => {
@@ -531,7 +663,7 @@ export const register: Register = (on, options) => {
       const [sessionId, clock] = await Promise.all([$.session.id(), $.process.run(['date', '+%Y-%m-%d'])])
       await recordTokens($, sessionId, clock.stdout.trim(), input + used.output_tokens)
     }
-    void refresh($)
+    void suggestAfterTurn($)
     return ran
   })
 
@@ -541,6 +673,21 @@ export const register: Register = (on, options) => {
     const ran = await next(e)
     void refresh($)
     return ran
+  })
+
+  // With attribution off, the trailer and footer the engine asks Claude to write are empty
+  on('attribution.text', async ($, e, next) =>
+    config.noAttribution && (e.kind === 'commit' || e.kind === 'pr') ? { text: '' } : next(e),
+  )
+
+  // The system prompt learns how git goes in this repo: the plain form, where each switch stands, and no
+  // credit lines with attribution off
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    const root = (await read($, snap))?.git?.root
+    if (!root) return composed
+    const text = gitGuide(root, await readGitAuto($, root), config.noAttribution)
+    return { sections: [...composed.sections, { id: 'statusline-band:git', text, scope: 'session' as const }] }
   })
 
   // The switches at work. A git add, commit or push asks while its switch is on ask. On auto it runs
@@ -563,6 +710,11 @@ export const register: Register = (on, options) => {
     const decision = gitDecision(plain, loose, auto)
     if (decision === 'pass') return below
     if (decision === 'allow') return { ...kept, allow: true }
+    // Under the dialog: what this step takes with it
+    if (root !== null) {
+      const summary = await pendingSummary($, root, plain?.steps ?? loose)
+      if (summary) $.ui.notice(e.tool_use_id, summary)
+    }
     const name = root?.split('/').filter(Boolean).pop() ?? 'this repo'
     if (plain === null) {
       return { ...kept, ask: `Confirm this git step. On auto the band only lets plain git add, commit -m and push through without asking.` }
@@ -826,7 +978,8 @@ export const register: Register = (on, options) => {
     )
 
     return (
-      <Box paddingX={1} flexDirection="column">
+      // The whole band on the card color, Clawd and the actions included; its own edge columns are padding
+      <Box paddingX={1} paddingY={1} flexDirection="column" backgroundColor={config.card}>
         <Box alignItems="center">
           {clawd}
           {/* The card's own edge columns are painted over below its first row, so the frame sits one in */}
@@ -887,7 +1040,9 @@ export const register: Register = (on, options) => {
               dimColor
               label={action.label}
               hotkey={action.hotkey}
-              onPress={() => void $.prompt.submit({ text: action.prompt, asUser: true })}
+              onPress={() =>
+                void (action.prompt === undefined ? quickCommit($) : $.prompt.submit({ text: action.prompt, asUser: true }))
+              }
             />,
           ])}
           </Box>

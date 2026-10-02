@@ -9,7 +9,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // What each person sets for themselves in /config, the manifest's userConfig, with out-of-range numbers clamped
-export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30 }
+export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, noAttribution: false }
 
 export const readConfig = (options: PluginOptions) => {
   const text = (key: string, fallback: string) => (typeof options[key] === 'string' ? (options[key] as string) : fallback)
@@ -20,6 +20,7 @@ export const readConfig = (options: PluginOptions) => {
     card: text('cardColor', DEFAULTS.card),
     padRows: whole('padRows', DEFAULTS.padRows, 0, 2),
     rollingDays: whole('historyDays', DEFAULTS.rollingDays, 7, 62),
+    noAttribution: typeof options.noAttribution === 'boolean' ? options.noAttribution : DEFAULTS.noAttribution,
   }
 }
 
@@ -224,3 +225,34 @@ export const gitDecision = (
   if (steps.length === 0) return 'pass'
   return plain !== null && steps.every(step => auto[step]) ? 'allow' : 'ask'
 }
+
+// Lines that credit Claude in a commit or pull request: Co-Authored-By naming Claude, a Claude-Session
+// link, the "Generated with Claude Code" footer
+const CLAUDE_CREDIT = /^\s*(?:co-authored-by:.*\bclaude\b.*|claude-session:.*|.*generated with \[?claude code\]?.*)$/gim
+
+// A commit message as a model wrote it, made ready to commit: no code fences or wrapping quotes, no line
+// crediting Claude, no apostrophes (so it fits the plain `commit -m '...'` form), blank runs collapsed
+export const cleanCommitMessage = (text: string) =>
+  text
+    .replace(/^\s*```\w*\n?|\n?```\s*$/g, '')
+    .replace(/^\s*(["'])([\s\S]*)\1\s*$/, '$2')
+    .replace(CLAUDE_CREDIT, '')
+    .replace(/'/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+// What the system prompt tells Claude about git in the session's repo: the plain form the switches let
+// through, where each switch stands, and no credit lines when the person turned attribution off
+export const gitGuide = (root: string, auto: Record<GitStep, boolean>, noAttribution: boolean) => {
+  const name = root.split('/').filter(Boolean).pop() ?? root
+  const state = (step: GitStep) => (auto[step] ? 'auto (runs without a prompt in the plain form)' : 'ask (the user confirms each one)')
+  return [
+    `# Git in ${name}`,
+    `The user's git switches for this repo: commit is ${state('commit')}, push is ${state('push')}.`,
+    `When you add, commit or push here, use only the plain form, so the switches can let it through: \`git -C ${root} add <files>\`, \`git -C ${root} commit -m '<message>'\` and \`git -C ${root} push\`, joined with && when you do more than one. Put the whole message in single quotes (it may span lines) and leave apostrophes out of it. Do not use heredocs, $(...), cd, pipes, or git options before the step: any of those always asks.`,
+    ...(noAttribution
+      ? ['Do not credit Claude in commits or pull requests: no Co-Authored-By line naming Claude, no Claude-Session line, no "Generated with Claude Code" footer.']
+      : []),
+  ].join('\n')
+}
+

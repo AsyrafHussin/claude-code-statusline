@@ -133,7 +133,7 @@ cd claude-code-statusline
   ▝▜ A H ▛▘   │  ◑ 47% 5h · reset 1h1m (11:09 AM)   │   ● 94% 7d · reset 1d9h (Sat 8:00 PM) ▲ out ~8h   │   ctx ━━━━━━━━ 24% 238k/1.0m                       │
     ▘▘ ▝▝     │                                                                                                                                              │
               ╰─ ✎ 2 files +57 −16 · ↑ 3 commits +518 · committed 2h ago ──────────────────────────── in 1.2m (99% cache) · out 4k · session 34m · 10:08 AM ─╯
-               1: push · 2: find bugs · 3: run tests · 4: summarize                                       commit auto · push ask
+               1: push · 2: find bugs · 3: run tests · 4: summarize · 5: quick commit                    commit auto · push ask
 ```
 
 | Part | Description |
@@ -144,8 +144,8 @@ cd claude-code-statusline
 | **Cost** | Session cost and hourly rate, plus today's and the last 30 days' spend across sessions; each with its tokens (read and written, cache included), counted from when the mod was installed |
 | **Bottom edge** | On the left: running subagents, uncommitted files and lines, unpushed commits and their lines, commits behind, stashes, time since the last commit. On the right: the last reply's input (with the cached share) and output tokens, the session length and the time |
 | **Card** | A near-black card behind the frame, with empty rows around the stats |
-| **Actions** | A row under the card that sends a prompt as if you typed it: `push` (commit and push), `find bugs`, `run tests`, `summarize`. Click one, or focus the band (ctrl+x tab) and press 1 to 4 |
-| **Git switches** | `commit auto · push ask` on the right of the actions, kept per repo. On `ask`, Claude's `git add` or `commit`, or `push`, waits for your OK; on `auto` it runs without a prompt, but only in its plain form: `git [-C /abs/path] add …`, `commit -m '…'`, `push [remote] [branch]`, joined by `&&` in one repo. Any other shape asks, a force push included. Click `commit` or `push` to flip it |
+| **Actions** | A row under the card that sends a prompt as if you typed it: `push` (commit and push), `find bugs`, `run tests`, `summarize`. `quick commit` has Haiku write a message from the diff, shows it for you to commit, commit and push, or type your own, then commits itself without a turn of the main model. Click one, or focus the band (ctrl+x tab) and press 1 to 5 |
+| **Git switches** | `commit auto · push ask` on the right of the actions, kept per repo. On `ask`, Claude's `git add` or `commit`, or `push`, waits for your OK; on `auto` it runs without a prompt, but only in its plain form: `git [-C /abs/path] add …`, `commit -m '…'`, `push [remote] [branch]`, joined by `&&` in one repo. Any other shape asks, a force push included. When a step asks, a line under the dialog says what it takes with it (`↑ 3 commits +518 −20 to origin/main`). The system prompt also tells Claude the plain form and where each switch stands. Click `commit` or `push` to flip it |
 | **Clawd** | Stands and blinks when idle, runs while Claude works (the border turns orange); sweats while a rate limit is at 95% or more (the border turns red), falls asleep after 10 quiet minutes, and cheers when your commits are pushed |
 
 Hover over a rate limit for its pace: across the window, over the last 3 hours, and when it would run out. Click the `30d` label on the top right, or run `/usage-history`, to open a pane with each of the last 30 days' cost and tokens. Running subagents show on the bottom left as `↻ 2 agents`, and the last reply's input shows how much came from the cache.
@@ -158,7 +158,7 @@ Each is a row in `/config`, or set them in `~/.claude/settings.json`:
 {
   "pluginConfigs": {
     "statusline-band": {
-      "options": { "initials": "AH", "cardColor": "#0a0a0a", "padRows": 1, "historyDays": 30 }
+      "options": { "initials": "AH", "cardColor": "#0a0a0a", "padRows": 1, "historyDays": 30, "noAttribution": true }
     }
   }
 }
@@ -170,6 +170,7 @@ Each is a row in `/config`, or set them in `~/.claude/settings.json`:
 | `cardColor` | `#0a0a0a` | Background of the card |
 | `padRows` | `1` | Empty rows above and below the stats, 0 to 2 |
 | `historyDays` | `30` | Days the rolling cost and the history pane cover, 7 to 62 |
+| `noAttribution` | `false` | Leave Co-Authored-By, Claude-Session and the Claude Code footer out of commits and pull requests |
 
 ### Tests
 

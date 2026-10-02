@@ -40,6 +40,12 @@
       "title": "History days",
       "description": "Days the rolling cost total and the history pane cover, 7 to 62",
       "default": 30
+    },
+    "noAttribution": {
+      "type": "boolean",
+      "title": "No Claude credit in commits",
+      "description": "Leave Co-Authored-By, Claude-Session and the Claude Code footer out of commits and pull requests",
+      "default": false
     }
   }
 }

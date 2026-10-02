@@ -2,6 +2,8 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   barCells,
+  cleanCommitMessage,
+  gitGuide,
   dayLabel,
   formatReset,
   formatTokens,
@@ -111,6 +113,7 @@ describe('settings', () => {
       card: '#0a0a0a',
       padRows: 2,
       rollingDays: 7,
+      noAttribution: false,
     })
     expect(readConfig({ initials: 'AH', cardColor: '#000000' })).toMatchObject({ initials: 'AH', card: '#000000' })
   })
@@ -197,3 +200,27 @@ describe('git switches', () => {
     expect(parsePlainGit('git -C /a add . && git push')).toBe(null)
   })
 })
+
+describe('commit messages', () => {
+  test('drops fences, quotes, credit lines and apostrophes', () => {
+    const written = "```\nfix: keep the switch state\n\nThe refresh wrote it back. It's fixed now.\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/x\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n```"
+    expect(cleanCommitMessage(written)).toBe('fix: keep the switch state\n\nThe refresh wrote it back. Its fixed now.')
+    expect(cleanCommitMessage('"feat: add a thing"')).toBe('feat: add a thing')
+  })
+
+  test('keeps a co-author who is not Claude', () => {
+    expect(cleanCommitMessage('feat: x\n\nCo-Authored-By: Ali <ali@example.com>')).toBe('feat: x\n\nCo-Authored-By: Ali <ali@example.com>')
+  })
+})
+
+describe('git guide', () => {
+  test('names the plain form and each switch, and the credit rule only when asked', () => {
+    const guide = gitGuide('/code/repo', { commit: true, push: false }, true)
+    expect(guide.includes('git -C /code/repo commit')).toBe(true)
+    expect(guide.includes('commit is auto')).toBe(true)
+    expect(guide.includes('push is ask')).toBe(true)
+    expect(guide.includes('Co-Authored-By')).toBe(true)
+    expect(gitGuide('/code/repo', { commit: true, push: true }, false).includes('Co-Authored-By')).toBe(false)
+  })
+})
+
