@@ -227,8 +227,19 @@ describe('git guide', () => {
     expect(guide.includes('git -C /code/repo commit')).toBe(true)
     expect(guide.includes('commit is auto')).toBe(true)
     expect(guide.includes('push is ask')).toBe(true)
+    expect(guide.includes('Commit on your own')).toBe(true)
+    expect(guide.includes('Push only when the user asks')).toBe(true)
     expect(guide.includes('Co-Authored-By')).toBe(true)
     expect(gitGuide('/code/repo', { commit: true, push: true }, false).includes('Co-Authored-By')).toBe(false)
+  })
+
+  test('auto means on its own, ask means only when asked', () => {
+    const both = gitGuide('/code/repo', { commit: true, push: true }, false)
+    expect(both.includes('Commit on your own')).toBe(true)
+    expect(both.includes('Push on your own, right after each commit')).toBe(true)
+    const neither = gitGuide('/code/repo', { commit: false, push: false }, false)
+    expect(neither.includes('Commit only when the user asks')).toBe(true)
+    expect(neither.includes('Push only when the user asks')).toBe(true)
   })
 })
 

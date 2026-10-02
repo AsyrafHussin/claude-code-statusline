@@ -250,14 +250,23 @@ export const cleanCommitMessage = (text: string) =>
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 
-// What the system prompt tells Claude about git in the session's repo: the plain form the switches let
-// through, where each switch stands, and no credit lines when the person turned attribution off
+// What the system prompt tells Claude about git in the session's repo: what each switch asks of it (on
+// auto it commits or pushes on its own; on ask only when asked), the plain form the switches let
+// through, and no credit lines when the person turned attribution off
 export const gitGuide = (root: string, auto: Record<GitStep, boolean>, noAttribution: boolean) => {
   const name = root.split('/').filter(Boolean).pop() ?? root
-  const state = (step: GitStep) => (auto[step] ? 'auto (runs without a prompt in the plain form)' : 'ask (the user confirms each one)')
+  const state = (step: GitStep) => (auto[step] ? 'auto' : 'ask')
+  const commit = auto.commit
+    ? 'Commit on your own: whenever you finish a complete change, commit it with a clear message, without being asked.'
+    : 'Commit only when the user asks; they confirm each commit.'
+  const push = auto.push
+    ? auto.commit
+      ? 'Push on your own, right after each commit.'
+      : 'When the user has you commit, push right after.'
+    : 'Push only when the user asks; they confirm each push.'
   return [
     `# Git in ${name}`,
-    `The user's git switches for this repo: commit is ${state('commit')}, push is ${state('push')}.`,
+    `The user's git switches for this repo: commit is ${state('commit')}, push is ${state('push')}. ${commit} ${push}`,
     `When you add, commit or push here, use only the plain form, so the switches can let it through: \`git -C ${root} add <files>\`, \`git -C ${root} commit -m '<message>'\` and \`git -C ${root} push\`, joined with && when you do more than one. Put the whole message in single quotes (it may span lines) and leave apostrophes out of it. Do not use heredocs, $(...), cd, pipes, or git options before the step: any of those always asks.`,
     ...(noAttribution
       ? ['Do not credit Claude in commits or pull requests: no Co-Authored-By line naming Claude, no Claude-Session line, no "Generated with Claude Code" footer.']
