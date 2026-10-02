@@ -50,6 +50,7 @@ const moodTick = atom({ plugin: 'statusline-band', key: 'moodTick' } as const, 0
 const music = atom({ plugin: 'statusline-band', key: 'music' } as const, null)
 const danceTick = atom({ plugin: 'statusline-band', key: 'danceTick' } as const, 0)
 const musicCompact = atom({ plugin: 'statusline-band', key: 'musicCompact' } as const, false)
+const cardCompact = atom({ plugin: 'statusline-band', key: 'cardCompact' } as const, false)
 const search = atom({ plugin: 'statusline-band', key: 'search' } as const, { query: '', status: 'idle', message: '', tracks: [] })
 
 // The pane with each day's cost and tokens, opened by /usage-history or the window's label on the band;
@@ -477,6 +478,7 @@ function startTimers($: EngineInterface) {
   if (hasTimers) return
   hasTimers = true
   $.clock.every(REFRESH_EVERY_MS, () => void refresh($))
+  void $.store.get(CARD_COMPACT_KEY).then(kept => update($, cardCompact, () => kept === true))
   $.clock.every(MOOD_TICK_MS, () => void tickMood($))
   if (runtime.config.spotify) {
     void readSpotify($)
@@ -496,6 +498,7 @@ function startTimers($: EngineInterface) {
 const SPOTIFY_EVERY_MS = 5_000
 const DANCE_EVERY_MS = 250
 const COMPACT_KEY = 'spotify-compact-v1'
+const CARD_COMPACT_KEY = 'card-compact-v1'
 // Asks only while Spotify runs ("is running" never launches it); fields joined by the unit separator
 const SPOTIFY_SCRIPT = `if application "Spotify" is running then
   tell application "Spotify"
@@ -665,6 +668,13 @@ async function playFound($: EngineInterface, track: FoundTrack) {
     .catch(() => null)
   await $.ui.close({ id: SEARCH_PANE })
   await readSpotify($)
+}
+
+// Shrinks the main card to one line or brings it back, kept across sessions
+async function toggleCardCompact($: EngineInterface) {
+  const isCompact = !(await read($, cardCompact))
+  await update($, cardCompact, () => isCompact)
+  await $.store.set(CARD_COMPACT_KEY, isCompact)
 }
 
 // ── What the buttons do: quick commit, compact, and the suggestion after a turn
@@ -980,6 +990,8 @@ export const register: Register = (on, options) => {
       isBlinking: await read($, isBlinking),
       music: runtime.config.spotify ? await read($, music) : null,
       isMusicCompact: await read($, musicCompact),
+      isCardCompact: await read($, cardCompact),
+      onCardCompact: () => void toggleCardCompact($),
       canDrawArt: e.surface === 'terminal',
       logoFile: e.surface === 'terminal' ? `${$.plugin.root}/assets/spotify.png` : undefined,
       actions: ACTIONS,

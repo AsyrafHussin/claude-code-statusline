@@ -65,6 +65,9 @@ export type BandView = {
   music: Music | null
   // The Spotify card shrunk to one line
   isMusicCompact: boolean
+  // The main card shrunk to one line, and the button that flips it
+  isCardCompact: boolean
+  onCardCompact: () => void
   canDrawArt: boolean
   // The Spotify logo, a PNG the plugin ships; absent where pictures cannot be drawn
   logoFile?: string
@@ -256,8 +259,33 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
     { text: s.time, dim: true },
     { text: ' ' },
   ]
-  const fill = Math.max(1, total - width(changes) - width(clock) - 4)
-  const bottom = [line('╰─'), ...changes, line('─'.repeat(fill)), ...clock, line('─╯')]
+  // On its right, after the time, the button that shrinks the card to one line
+  const fill = Math.max(1, total - width(changes) - width(clock) - 2 - 'minimize ─╯'.length)
+  const bottom = [line('╰─'), ...changes, line('─'.repeat(fill)), ...clock]
+
+  // Shrunk: one line in place of the card and Clawd: the repo and branch, the model, each limit and the
+  // context as a percent, the first git fact, and the session cost, with the button that brings it back
+  const compactSegs: Seg[] = [
+    { text: `◆ ${s.folder}`, color: COLORS.folder, bold: true },
+    ...(g === null ? [] : [{ text: ' ' }, { text: g.branch, color: COLORS.branch }]),
+    sep,
+    { text: `✦ ${s.model}`, color: COLORS.model },
+    ...s.limits.flatMap((l): Seg[] => [
+      sep,
+      { text: `${ring(l.percent)} `, color: toneHex(l.percent) },
+      { text: `${Math.round(l.percent)}%`, bold: true, color: l.percent >= 50 ? toneHex(l.percent) : undefined },
+      { text: ` ${LIMIT_LABELS[l.kind] ?? l.kind}`, dim: true },
+    ]),
+    ...(s.context
+      ? [
+          sep,
+          { text: 'ctx ', dim: true },
+          { text: `${Math.round(s.context.percent)}%`, bold: true, color: s.context.percent >= 50 ? toneHex(s.context.percent) : undefined },
+        ]
+      : []),
+    ...(gitGroups[0] ? [sep, ...gitGroups[0]] : []),
+    ...(s.costUsd !== null ? [sep, { text: formatUsd(s.costUsd), color: COLORS.ok, bold: true }] : []),
+  ]
 
   // Clawd
   const step = tick === null ? 0 : Math.floor(tick / 2)
@@ -410,7 +438,7 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
       : []
     // ...and on its right, the button that shrinks the card to one line
     const MINIMIZE = ' minimize '
-    const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, cardWidth - width(lastSegs) - 3 - MINIMIZE.length)))]
+    const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, cardWidth - width(lastSegs) - 2 - MINIMIZE.length - 2))), { text: ' ' }]
 
     // Shrunk: one line, no frame and no Beatbot, from the play controls to the track and the time,
     // with the button that brings the card back
@@ -514,6 +542,15 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
   return (
     // The whole band on the card color (none when cardColor is empty); its own edge columns are padding
     <Box paddingX={1} paddingY={1} flexDirection="column" backgroundColor={card}>
+      {view.isCardCompact ? (
+        <Box marginLeft={INDENT} width={total - 4} justifyContent="space-between">
+          <Text wrap="truncate">{draw(compactSegs)}</Text>
+          <Box flexShrink={0}>
+            <Text>{'  '}</Text>
+            <Button key="card-compact" plain dimColor label="expand" onPress={view.onCardCompact} />
+          </Box>
+        </Box>
+      ) : (
       <Box alignItems="center">
         {clawd}
         <Box flexDirection="column" backgroundColor={card} paddingX={CARD_INSET}>
@@ -552,9 +589,14 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
             </Box>
             {edge('r')}
           </Box>
-          <Text wrap="truncate">{draw(bottom)}</Text>
+          <Box>
+            <Text wrap="truncate">{draw(bottom)}</Text>
+            <Button key="card-compact" plain dimColor label="minimize" onPress={view.onCardCompact} />
+            <Text>{draw([line(' ─╯')])}</Text>
+          </Box>
         </Box>
       </Box>
+      )}
       {/* Drawn plain, as the band's own dim text: "1: push · 2: find bugs · ...", the repo's switches on the right */}
       {/* Each action keeps its separator; on a narrow screen they wrap whole, and the switches drop to
           their own line, rather than running together */}
