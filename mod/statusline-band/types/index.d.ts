@@ -1,4 +1,4 @@
-export type Limit = { kind: string; percent: number; resetsAt?: string }
+export type Limit = { kind: string; percent: number; resetsAt?: string; resetsOn?: string }
 
 export type Snapshot = {
   folder: string

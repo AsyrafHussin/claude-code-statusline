@@ -201,6 +201,15 @@ async function alertLimits($: EngineInterface, limits: Limit[]) {
   if (fresh.length > 0) await $.store.set('alerted', [...alerted, ...fresh].slice(-50))
 }
 
+// The reset moment in the machine's own timezone: "11:10 AM" within a day, else "Sat 8:00 PM"
+async function localResetTime($: EngineInterface, iso: string, now: number) {
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return undefined
+  const format = ms - now < 86_400_000 ? '+%-I:%M %p' : '+%a %-I:%M %p'
+  const { exitCode, stdout } = await $.process.run(['date', '-r', String(Math.floor(ms / 1000)), format])
+  return exitCode === 0 ? stdout.trim() : undefined
+}
+
 // The repo's name, with the path below its root when the session runs in a subfolder
 const placeFolder = (cwd: string, root: string | null) => {
   const base = (path: string) => path.split('/').filter(Boolean).pop() ?? path
@@ -226,8 +235,13 @@ async function refresh($: EngineInterface) {
     const costUsd = usage.cost?.usd ?? null
     const ledger = costUsd !== null ? await recordCost($, sessionId, costUsd, day, usage.startedAt >= midnight) : null
     const month = day.slice(0, 7)
-    const limits = usage.rateLimits.map(
-      (l): Limit => ({ kind: l.kind, percent: l.percentUsed, resetsAt: l.resetsAt }),
+    const limits = await Promise.all(
+      usage.rateLimits.map(async (l): Promise<Limit> => ({
+        kind: l.kind,
+        percent: l.percentUsed,
+        resetsAt: l.resetsAt,
+        resetsOn: l.resetsAt ? await localResetTime($, l.resetsAt, now) : undefined,
+      })),
     )
     const ctx = usage.context
 
@@ -361,7 +375,26 @@ export const register: Register = on => {
       { text: `✦ ${s.model}`, color: COLORS.model },
       { text: ' ' },
     ]
-    const top = [...title, line('─'.repeat(Math.max(1, total - width(title) - 1))), line('╮')]
+    // Top right: what the session, today and this month have cost
+    const hours = (s.now - s.startedAt) / 3_600_000
+    const cost: Seg[] = []
+    if (s.costUsd !== null) {
+      cost.push({ text: ' ' }, { text: formatUsd(s.costUsd), color: COLORS.ok, bold: true }, { text: ' session', dim: true })
+      if (hours > 0.05) cost.push({ text: ` ${formatUsd(s.costUsd / hours)}/h`, dim: true })
+      const extras: [number | null, string][] = [[s.todayUsd, 'today'], [s.monthUsd, 'mo']]
+      let shown = s.costUsd
+      for (const [usd, label] of extras) {
+        if (usd === null || usd - shown < 0.01) continue
+        cost.push({ text: ' · ', dim: true }, { text: formatUsd(usd), color: COLORS.ok }, { text: ` ${label}`, dim: true })
+        shown = usd
+      }
+      cost.push({ text: ' ' })
+    }
+    // When the whole line does not fit beside the title, the session cost alone still shows
+    const fits = (segs: Seg[]) => width(title) + width(segs) + 3 <= total
+    const costShort = cost.slice(0, 3).concat(cost.length > 0 ? [{ text: ' ' }] : [])
+    const right = fits(cost) ? cost : fits(costShort) ? costShort : []
+    const top = [...title, line('─'.repeat(Math.max(1, total - width(title) - width(right) - 2))), ...right, line('─╮')]
 
     // Bottom edge: the git groups on the left, how long the session has run and the time on the right
     const changes: Seg[] =
@@ -410,12 +443,12 @@ export const register: Register = on => {
       { text: ` ${label}`, dim: true },
       ...extra,
     ]
-    const hours = (s.now - s.startedAt) / 3_600_000
     const stats: Seg[][] = [
       ...s.limits.map(l => {
         const resetMs = l.resetsAt ? Date.parse(l.resetsAt) - s.now : 0
         const name = LIMIT_LABELS[l.kind] ?? l.kind
-        return stat(l.percent, resetMs > 0 ? `${name} · reset ${formatReset(resetMs)}` : name)
+        if (resetMs <= 0) return stat(l.percent, name)
+        return stat(l.percent, `${name} · reset ${formatReset(resetMs)}`, l.resetsOn ? [{ text: ` (${l.resetsOn})`, dim: true }] : [])
       }),
       ...(s.context
         ? [
@@ -433,18 +466,6 @@ export const register: Register = on => {
           ]
         : []),
     ]
-    if (s.costUsd !== null) {
-      const cost: Seg[] = [{ text: formatUsd(s.costUsd), color: COLORS.ok, bold: true }, { text: ' session', dim: true }]
-      if (hours > 0.05) cost.push({ text: ` ${formatUsd(s.costUsd / hours)}/h`, dim: true })
-      const extras: [number | null, string][] = [[s.todayUsd, 'today'], [s.monthUsd, 'mo']]
-      let shown = s.costUsd
-      for (const [usd, label] of extras) {
-        if (usd === null || usd - shown < 0.01) continue
-        cost.push({ text: ' · ', dim: true }, { text: formatUsd(usd), color: COLORS.ok }, { text: ` ${label}`, dim: true })
-        shown = usd
-      }
-      stats.push(cost)
-    }
 
     // Drop the last blocks first when the terminal is too narrow for one row
     const divider: Seg = { text: '  │  ', color: border }

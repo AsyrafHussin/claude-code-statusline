@@ -126,15 +126,15 @@ cd claude-code-statusline
 `mod/statusline-band` is a [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) that shows the same information as a panel above the prompt, with Clawd, the Claude Code mascot, beside it. It needs Claude Code v2.1.287 or later.
 
 ```
-   ▐▛███▜▌    ╭─ ◆ claude-code-statusline ─ main ─ ✦ Opus 5.5 ──────────────────────────────────────────────────────────────╮
-  ▝▜ A H ▛▘   │  ◑ 47% 5h · reset 1h1m  │  ● 94% 7d · reset 1d9h  │  ctx ▰▰▱▱▱▱▱▱ 24% 238k/1.0m  │  $7.01 session · $9.06 today  │
-    ▘▘ ▝▝     ╰─ ✎ 2 files +57 −16 · ↑ 3 commits +518 ──────────────────────────────────────── session 34m · 10:08 AM ─╯
+   ▐▛███▜▌    ╭─ ◆ claude-code-statusline ─ main ─ ✦ Opus 5.5 ─────────────────── $7.01 session $12.09/h · $9.06 today ─╮
+  ▝▜ A H ▛▘   │  ◑ 47% 5h · reset 1h1m (11:09 AM)  │  ● 94% 7d · reset 1d9h (Sat 8:00 PM)  │  ctx ▰▰▱▱▱▱▱▱ 24% 238k/1.0m  │
+    ▘▘ ▝▝     ╰─ ✎ 2 files +57 −16 · ↑ 3 commits +518 ──────────────────────────────────── session 34m · 10:08 AM ─╯
 ```
 
 | Part | Description |
 |------|-------------|
-| **Top edge** | Repo name (with the subfolder dimmed when you're in one), branch, model |
-| **5h / 7d** | Rate limits as filling rings, with the reset countdown |
+| **Top edge** | Repo name (with the subfolder dimmed when you're in one), branch, model; cost on the right |
+| **5h / 7d** | Rate limits as filling rings, with the reset countdown and the local reset time |
 | **ctx** | Context usage as a bar, with tokens used out of the window |
 | **Cost** | Session cost and hourly rate, plus today's and this month's spend across sessions |
 | **Bottom edge** | Uncommitted files and lines, unpushed commits and their lines, commits behind, stashes; then session duration and the time |
