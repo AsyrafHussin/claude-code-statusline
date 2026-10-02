@@ -405,6 +405,9 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
         ? BLINK_CELLS
         : LOGO_CELLS
     const cardWidth = total
+    // ▶ is one column narrower than ❚❚: the column goes after ▶▶, so the controls sit evenly and
+    // nothing after them moves when the track plays or pauses
+    const pausePad = m.isPlaying ? '' : ' '
     const time = `${formatClock(m.positionMs)} / ${formatClock(m.durationMs)}`
     const last = m.recent[0]
     // Spotify's card is framed in Spotify green
@@ -449,11 +452,11 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
             <Text color={SPOTIFY_GREEN} bold>{'♪ '}</Text>
             <Button key="music-previous" plain label="◀◀" onPress={() => view.onMusic('previous')} />
             <Text>{' '}</Text>
-            <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶ '} onPress={() => view.onMusic('playpause')} />
+            <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶'} onPress={() => view.onMusic('playpause')} />
             <Text>{' '}</Text>
             <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next')} />
             <Text wrap="truncate">
-              <Text bold>{`  ${m.name}`}</Text>
+              <Text bold>{`${pausePad}  ${m.name}`}</Text>
               <Text>{m.artist ? ` — ${m.artist}` : ''}</Text>
               <Text dimColor>{`  ${time}`}</Text>
             </Text>
@@ -501,10 +504,10 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
               <Box flexShrink={0}>
                 <Button key="music-previous" plain label="◀◀" onPress={() => view.onMusic('previous')} />
                 <Text>{'  '}</Text>
-                <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶ '} onPress={() => view.onMusic('playpause')} />
+                <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶'} onPress={() => view.onMusic('playpause')} />
                 <Text>{'  '}</Text>
                 <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next')} />
-                <Text>{'   '}</Text>
+                <Text>{`${pausePad}   `}</Text>
                 <Button key="music-search" plain dimColor label="search" onPress={() => view.onMusic('search')} />
                 {hasTime ? <Text>{'    '}</Text> : null}
                 {hasTime ? (
@@ -629,7 +632,7 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
         )}
       </Box>
       {/* Under the actions, while Spotify plays: Beatbot and the Spotify card */}
-      {view.music && <Box marginTop={1}>{drawMusic(view.music)}</Box>}
+      {view.music && <Box marginTop={view.isMusicCompact ? 0 : 1}>{drawMusic(view.music)}</Box>}
     </Box>
   )
 }
