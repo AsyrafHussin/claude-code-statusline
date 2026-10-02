@@ -255,4 +255,3 @@ export const gitGuide = (root: string, auto: Record<GitStep, boolean>, noAttribu
       : []),
   ].join('\n')
 }
-

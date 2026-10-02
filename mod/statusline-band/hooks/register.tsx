@@ -979,11 +979,11 @@ export const register: Register = (on, options) => {
 
     return (
       // The whole band on the card color, Clawd and the actions included; its own edge columns are padding
-      <Box paddingX={1} paddingY={1} flexDirection="column" backgroundColor={config.card}>
+      <Box paddingX={1} paddingY={1} flexDirection="column" backgroundColor={config.card || undefined}>
         <Box alignItems="center">
           {clawd}
           {/* The card's own edge columns are painted over below its first row, so the frame sits one in */}
-          <Box flexDirection="column" backgroundColor={config.card} paddingX={CARD_INSET}>
+          <Box flexDirection="column" backgroundColor={config.card || undefined} paddingX={CARD_INSET}>
             <Box>
               <Text wrap="truncate">{draw(topLeft)}</Text>
               {showFull && hasHistory && (
@@ -1006,7 +1006,7 @@ export const register: Register = (on, options) => {
                           left={0}
                           display="none"
                           hover={{ display: 'flex' }}
-                          backgroundColor={config.card}
+                          backgroundColor={config.card || undefined}
                         >
                           <Text wrap="truncate">{draw(st.card)}</Text>
                         </Box>

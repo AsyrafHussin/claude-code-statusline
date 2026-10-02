@@ -167,7 +167,7 @@ Each is a row in `/config`, or set them in `~/.claude/settings.json`:
 | Setting | Default | What it does |
 |---------|---------|--------------|
 | `initials` | empty | Up to two letters on Clawd's shirt |
-| `cardColor` | `#0a0a0a` | Background of the card |
+| `cardColor` | `#0a0a0a` | Background of the band; empty (`""`) for none, so it takes the terminal's own |
 | `padRows` | `1` | Empty rows above and below the stats, 0 to 2 |
 | `historyDays` | `30` | Days the rolling cost and the history pane cover, 7 to 62 |
 | `noAttribution` | `false` | Leave Co-Authored-By, Claude-Session and the Claude Code footer out of commits and pull requests |

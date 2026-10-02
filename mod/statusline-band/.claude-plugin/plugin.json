@@ -26,7 +26,7 @@
     "cardColor": {
       "type": "string",
       "title": "Card color",
-      "description": "Background of the card behind the panel, as #rrggbb",
+      "description": "Background of the band, as #rrggbb; empty for none, so it takes the terminal's own",
       "default": "#0a0a0a"
     },
     "padRows": {
