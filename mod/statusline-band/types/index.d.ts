@@ -37,9 +37,14 @@ export type Music = {
   volume: number
   // When the track was paused, epoch ms; null while it plays
   pausedAt: number | null
+  // When Spotify was read, epoch ms, so a playing track's position can be counted on between reads
+  readAt?: number
   // The last few tracks heard before this one, newest first
   recent: { trackId: string; name: string; artist: string; at: number }[]
 }
+
+// A track's synced lyrics from LRCLIB, by its Spotify id; no lines when it has none synced
+export type Lyrics = { trackId: string; lines: { atMs: number; text: string }[] }
 
 // The Spotify search dialog: what was asked, how it went, and the tracks found
 export type SpotifySearch = {
@@ -106,6 +111,6 @@ export type CostLedger = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'statusline-band': { snap: Snapshot | null; isCompacting: boolean; frame: number; isBlinking: boolean; lastTurn: TurnTokens | null; history: HistoryDay[]; mood: Mood; moodTick: number; music: Music | null; danceTick: number; search: SpotifySearch; musicCompact: boolean; musicOn: boolean; cardCompact: boolean }
+    'statusline-band': { snap: Snapshot | null; isCompacting: boolean; frame: number; isBlinking: boolean; lastTurn: TurnTokens | null; history: HistoryDay[]; mood: Mood; moodTick: number; music: Music | null; danceTick: number; search: SpotifySearch; musicCompact: boolean; musicOn: boolean; lyrics: Lyrics | null; lyricsOn: boolean; cardCompact: boolean }
   }
 }

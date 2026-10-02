@@ -96,6 +96,11 @@ export type BandView = {
   // The Spotify switch beside the repo's: on or off, null when the setting is off and there is no switch
   isMusicOn: boolean | null
   onMusicSwitch: () => void
+  // The line sung now and the next, inside the Spotify card; null when there are no synced lyrics
+  lyric: { current: string; next: string } | null
+  // The lyrics switch, beside Spotify's while it is on; null otherwise
+  isLyricsOn: boolean | null
+  onLyricsSwitch: () => void
   // The main card shrunk to one line, and the button that flips it
   isCardCompact: boolean
   onCardCompact: () => void
@@ -558,6 +563,20 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
             </Box>
             <Text wrap="truncate">{draw([line('│')])}</Text>
           </Box>
+          {/* The lyrics, under the controls: the line sung now, bright, and the next one dim */}
+          {view.lyric &&
+            [
+              { key: 'lyric-now', text: view.lyric.current || '♪', isNow: true },
+              { key: 'lyric-next', text: view.lyric.next, isNow: false },
+            ].map(row => (
+              <Box key={row.key} width={cardWidth}>
+                <Text wrap="truncate">{draw([line('│')])}</Text>
+                <Box flexGrow={1} paddingX={2}>
+                  <Text wrap="truncate" bold={row.isNow} dimColor={!row.isNow}>{row.text || ' '}</Text>
+                </Box>
+                <Text wrap="truncate">{draw([line('│')])}</Text>
+              </Box>
+            ))}
           <Box>
             <Text wrap="truncate">{draw(bottomLine)}</Text>
             <Button key="music-compact" plain dimColor label={musicMinimize} onPress={() => view.onMusic('compact')} />
@@ -653,6 +672,13 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
               <Button key="switch-spotify" plain dimColor label="spotify" onPress={view.onMusicSwitch} />,
               <Text key="switch-state-spotify" color={view.isMusicOn ? COLORS.ok : undefined} dimColor={!view.isMusicOn}>
                 {view.isMusicOn ? ' on' : ' off'}
+              </Text>,
+            ]}
+            {view.isLyricsOn !== null && [
+              <Text key="switch-sep-lyrics" dimColor>{' · '}</Text>,
+              <Button key="switch-lyrics" plain dimColor label="lyrics" onPress={view.onLyricsSwitch} />,
+              <Text key="switch-state-lyrics" color={view.isLyricsOn ? COLORS.ok : undefined} dimColor={!view.isLyricsOn}>
+                {view.isLyricsOn ? ' on' : ' off'}
               </Text>,
             ]}
             {gitAuto && (['commit', 'push'] as const).flatMap((step, i) => [

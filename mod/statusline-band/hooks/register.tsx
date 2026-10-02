@@ -12,6 +12,10 @@ import {
   aliasSteps,
   cleanCommitMessage,
   formatReset,
+  livePosition,
+  lyricAt,
+  lyricsUrl,
+  parseLyrics,
   gitDecision,
   gitGuide,
   isSensitivePath,
@@ -53,6 +57,9 @@ const danceTick = atom({ plugin: 'statusline-band', key: 'danceTick' } as const,
 const musicCompact = atom({ plugin: 'statusline-band', key: 'musicCompact' } as const, false)
 // The Spotify switch on the band: off until turned on, and nothing is asked of Spotify while it is off
 const musicOn = atom({ plugin: 'statusline-band', key: 'musicOn' } as const, false)
+// The playing track's lyrics, and their switch beside Spotify's: on until turned off
+const lyrics = atom({ plugin: 'statusline-band', key: 'lyrics' } as const, null)
+const lyricsOn = atom({ plugin: 'statusline-band', key: 'lyricsOn' } as const, true)
 const cardCompact = atom({ plugin: 'statusline-band', key: 'cardCompact' } as const, false)
 const search = atom({ plugin: 'statusline-band', key: 'search' } as const, { query: '', status: 'idle', message: '', tracks: [] })
 
@@ -480,8 +487,9 @@ function startTimers($: EngineInterface) {
   void $.store.get(CARD_COMPACT_KEY).then(kept => update($, cardCompact, () => kept === true))
   $.clock.every(MOOD_TICK_MS, () => void tickMood($))
   if (runtime.config.spotify) {
-    void $.store.get(MUSIC_ON_KEY).then(async kept => {
+    void Promise.all([$.store.get(MUSIC_ON_KEY), $.store.get(LYRICS_ON_KEY)]).then(async ([kept, keptLyrics]) => {
       await update($, musicOn, () => kept === true)
+      await update($, lyricsOn, () => keptLyrics !== false)
       await readSpotify($)
     })
     $.clock.every(SPOTIFY_EVERY_MS, () => void readSpotify($))
@@ -501,6 +509,7 @@ const SPOTIFY_EVERY_MS = 5_000
 const DANCE_EVERY_MS = 250
 const COMPACT_KEY = 'spotify-compact-v1'
 const MUSIC_ON_KEY = 'spotify-on-v1'
+const LYRICS_ON_KEY = 'lyrics-on-v1'
 const CARD_COMPACT_KEY = 'card-compact-v1'
 // Asks only while Spotify runs ("is running" never launches it); fields joined by the unit separator
 const SPOTIFY_SCRIPT = `if application "Spotify" is running then
@@ -538,7 +547,36 @@ async function readSpotify($: EngineInterface) {
   }
   // When the track was paused, kept while it stays paused (a pause seen at load counts from then)
   const pausedAt = playing.isPlaying ? null : before && !before.isPlaying && before.pausedAt !== null ? before.pausedAt : await $.clock.now()
-  await update($, music, () => ({ ...playing, pausedAt, recent: recent.filter(t => t.trackId !== playing.trackId).slice(0, RECENT_SHOWN) }))
+  const readAt = await $.clock.now()
+  await update($, music, () => ({ ...playing, pausedAt, readAt, recent: recent.filter(t => t.trackId !== playing.trackId).slice(0, RECENT_SHOWN) }))
+  void loadLyrics($, playing)
+}
+
+// LRCLIB asks each app to name itself
+const LYRICS_AGENT = 'statusline-band (https://github.com/AsyrafHussin/claude-code-statusline)'
+// The track whose lyrics were last asked for, so each track is asked once, even when the answer failed
+let lyricsAskedFor: string | null = null
+
+// The track's synced lyrics, asked of LRCLIB once per track while the lyrics switch is on
+async function loadLyrics($: EngineInterface, m: { trackId: string; name: string; artist: string; album: string; durationMs: number }) {
+  if (!(await read($, lyricsOn)) || lyricsAskedFor === m.trackId) return
+  if ((await read($, lyrics))?.trackId === m.trackId) return
+  lyricsAskedFor = m.trackId
+  const got = await $.http.fetch(lyricsUrl(m), { headers: { 'User-Agent': LYRICS_AGENT } }).catch(() => null)
+  // No answer (offline): nothing kept, so the next track asks again; a 404 is a track LRCLIB lacks
+  if (got === null || (!got.ok && got.status !== 404)) return
+  const lines = got.ok ? parseLyrics(got.text) : []
+  if ((await read($, music))?.trackId === m.trackId) await update($, lyrics, () => ({ trackId: m.trackId, lines }))
+}
+
+// Turns the lyrics on or off, kept across sessions
+async function toggleLyrics($: EngineInterface) {
+  const isOn = !(await read($, lyricsOn))
+  await update($, lyricsOn, () => isOn)
+  await $.store.set(LYRICS_ON_KEY, isOn)
+  lyricsAskedFor = null
+  const m = await read($, music)
+  if (isOn && m !== null) await loadLyrics($, m)
 }
 
 // Steps only while Beatbot moves and shows: dancing to a track, or asleep with his Z's, and the card not
@@ -1011,6 +1049,13 @@ export const register: Register = (on, options) => {
     const s = await read($, snap)
     if (e.props.hasSurvey || s === null) return next(e)
     const isWorking = e.props.isWorking
+    // A playing track's position counts on between Spotify's reads, so the bar, the time and the lyric move
+    // with each of Beatbot's steps
+    const kept = runtime.config.spotify && (await read($, musicOn)) ? await read($, music) : null
+    const playing = kept && { ...kept, positionMs: livePosition(kept, await $.clock.now()) }
+    const words = await read($, lyrics)
+    const isLyricsOn = await read($, lyricsOn)
+    const lyric = playing && isLyricsOn && words?.trackId === playing.trackId && words.lines.length > 0 ? lyricAt(words.lines, playing.positionMs) : null
     return drawBand($.ui.resolve(e), {
       s,
       config: runtime.config,
@@ -1024,7 +1069,10 @@ export const register: Register = (on, options) => {
       danceTick: await read($, danceTick),
       tick: isWorking ? await read($, frame) : null,
       isBlinking: await read($, isBlinking),
-      music: runtime.config.spotify && (await read($, musicOn)) ? await read($, music) : null,
+      music: playing,
+      lyric,
+      isLyricsOn: runtime.config.spotify && (await read($, musicOn)) ? isLyricsOn : null,
+      onLyricsSwitch: () => void toggleLyrics($),
       isMusicCompact: await read($, musicCompact),
       isMusicOn: runtime.config.spotify ? await read($, musicOn) : null,
       onMusicSwitch: () => void toggleMusic($),

@@ -618,3 +618,55 @@ export const fitText = (text: string, n: number) => {
   if (chars.length <= n) return text + ' '.repeat(n - chars.length)
   return `${chars.slice(0, n - 1).join('')}…`
 }
+
+// ── Lyrics: synced lines from LRCLIB (lrclib.net), found by the track's name, artist, album and length
+
+export type LyricLine = { atMs: number; text: string }
+
+// LRCLIB's lookup for one track; the length in whole seconds, which it matches within a couple
+export const lyricsUrl = (m: { name: string; artist: string; album: string; durationMs: number }) =>
+  `https://lrclib.net/api/get?${[
+    ['track_name', m.name],
+    ['artist_name', m.artist],
+    ['album_name', m.album],
+    ['duration', String(Math.round(m.durationMs / 1000))],
+  ]
+    .map(([k, v]) => `${k}=${encodeURIComponent(v ?? '')}`)
+    .join('&')}`
+
+// Synced LRC as lines in time order: "[01:02.34] words", a line with several stamps kept at each,
+// empty lines kept (they clear the line shown), and tags such as [ar:...] skipped
+export const parseLrc = (text: string): LyricLine[] => {
+  const lines: LyricLine[] = []
+  for (const raw of text.split(/\r?\n/)) {
+    const stamps = [...raw.matchAll(/\[(\d+):(\d{1,2}(?:[.:]\d{1,3})?)\]/g)]
+    if (stamps.length === 0) continue
+    const words = raw.replace(/\[[^\]]*\]/g, '').trim()
+    for (const [, min = '0', sec = '0'] of stamps) {
+      lines.push({ atMs: Math.round((Number(min) * 60 + Number(sec.replace(':', '.'))) * 1000), text: words })
+    }
+  }
+  return lines.sort((a, b) => a.atMs - b.atMs)
+}
+
+// The lines in LRCLIB's answer, an empty list when it has none synced (plain lyrics cannot follow the song)
+export const parseLyrics = (json: string): LyricLine[] => {
+  try {
+    const got = JSON.parse(json) as { syncedLyrics?: unknown; instrumental?: unknown }
+    return typeof got.syncedLyrics === 'string' ? parseLrc(got.syncedLyrics) : []
+  } catch {
+    return []
+  }
+}
+
+// The line being sung at a moment and the one after it; before the first line, only what comes next
+export const lyricAt = (lines: LyricLine[], positionMs: number): { current: string; next: string } => {
+  let i = -1
+  while (i + 1 < lines.length && (lines[i + 1]?.atMs ?? Infinity) <= positionMs) i++
+  const after = lines.slice(i + 1).find(l => l.text !== '')
+  return { current: lines[i]?.text ?? '', next: after?.text ?? '' }
+}
+
+// Where a playing track is now, counting on from when Spotify was last read; never past its end
+export const livePosition = (m: { isPlaying: boolean; positionMs: number; durationMs: number; readAt?: number }, now: number) =>
+  m.isPlaying && m.readAt !== undefined ? Math.min(m.durationMs || Infinity, m.positionMs + Math.max(0, now - m.readAt)) : m.positionMs

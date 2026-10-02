@@ -36,6 +36,11 @@ import {
   shirtText,
   sumDays,
   toBase64,
+  livePosition,
+  lyricAt,
+  lyricsUrl,
+  parseLrc,
+  parseLyrics,
 } from './logic'
 
 const HOUR = 3_600_000
@@ -502,5 +507,45 @@ describe('raster glyphs', () => {
   test('skips a glyph outside the grid', () => {
     const cells = pixelsToCells({ width: 2, height: 2, pixels: [CLEAR, CLEAR, CLEAR, CLEAR] }, 2, 1)
     expect(withGlyphs(cells, 2, [{ column: 5, row: 0, char: 'Z', color: 1 }])).toBe(cells)
+  })
+})
+
+describe('lyrics', () => {
+  const lrc = '[ar:The Warning]\n[00:00.00] \n[00:18.56] I know you try so hard\n[00:21.55] I know you wish you were me\n[01:02.5][02:10.00] Chorus\nno stamp here'
+
+  test('reads synced LRC in time order, a line at each of its stamps', () => {
+    expect(parseLrc(lrc)).toEqual([
+      { atMs: 0, text: '' },
+      { atMs: 18_560, text: 'I know you try so hard' },
+      { atMs: 21_550, text: 'I know you wish you were me' },
+      { atMs: 62_500, text: 'Chorus' },
+      { atMs: 130_000, text: 'Chorus' },
+    ])
+  })
+
+  test('finds the line sung now and the next one with words', () => {
+    const lines = parseLrc(lrc)
+    expect(lyricAt(lines, 5_000)).toEqual({ current: '', next: 'I know you try so hard' })
+    expect(lyricAt(lines, 19_000)).toEqual({ current: 'I know you try so hard', next: 'I know you wish you were me' })
+    expect(lyricAt(lines, 200_000)).toEqual({ current: 'Chorus', next: '' })
+    expect(lyricAt([], 1_000)).toEqual({ current: '', next: '' })
+  })
+
+  test('takes only synced lyrics from the answer, and nothing from a bad one', () => {
+    expect(parseLyrics(JSON.stringify({ syncedLyrics: '[00:01.00] hi' }))).toEqual([{ atMs: 1_000, text: 'hi' }])
+    expect(parseLyrics(JSON.stringify({ plainLyrics: 'hi', syncedLyrics: null }))).toEqual([])
+    expect(parseLyrics('not json')).toEqual([])
+  })
+
+  test('asks LRCLIB by name, artist, album and whole seconds', () => {
+    expect(lyricsUrl({ name: 'Kerosene', artist: 'The Warning', album: 'Kerosene', durationMs: 206_400 })).toBe(
+      'https://lrclib.net/api/get?track_name=Kerosene&artist_name=The%20Warning&album_name=Kerosene&duration=206',
+    )
+  })
+
+  test('counts a playing track on from its last read, and stops at its end', () => {
+    expect(livePosition({ isPlaying: true, positionMs: 10_000, durationMs: 60_000, readAt: 1_000 }, 3_500)).toBe(12_500)
+    expect(livePosition({ isPlaying: true, positionMs: 59_000, durationMs: 60_000, readAt: 0 }, 5_000)).toBe(60_000)
+    expect(livePosition({ isPlaying: false, positionMs: 10_000, durationMs: 60_000, readAt: 0 }, 5_000)).toBe(10_000)
   })
 })
