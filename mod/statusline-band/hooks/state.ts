@@ -27,6 +27,8 @@ export const runtime = {
   config: DEFAULTS as Config,
   permissionMode: undefined as string | undefined,
   effort: undefined as string | undefined,
+  // The Claude plan, read once per load from ~/.claude.json; null when there is none
+  plan: undefined as string | null | undefined,
   // When the person last did something, and until when Clawd cheers
   lastActiveAt: null as number | null,
   cheerUntil: 0,

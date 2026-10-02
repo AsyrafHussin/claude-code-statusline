@@ -2,7 +2,7 @@
 
 A panel above the Claude Code prompt, with Clawd, the Claude Code mascot, standing beside it.
 
-- **Top edge:** the repo name, branch, and the model with its effort. On the right: the session's cost and tokens, then today's and the last 30 days'.
+- **Top edge:** the repo name, branch, and the model with its effort and your Claude plan (Max 5x, Pro...). On the right: the session's cost and tokens, then today's and the last 30 days'.
 - **Middle:** the 5-hour and 7-day rate limits as filling rings, with the reset countdown and the local reset time. `▲ out ~7h` appears when the pace would use a limit up before it resets. Then context usage as a bar.
 - **Bottom edge:** running subagents, uncommitted files and lines, unpushed commits and their lines, commits behind, stashes and the time since the last commit. On the right: the last reply's input (with its cached share) and output tokens, the session length and the time.
 - **Clawd:** runs while Claude works. Otherwise it sweats while a rate limit is at 95% or more, falls asleep after 10 quiet minutes, and cheers when your commits are pushed.
@@ -57,6 +57,7 @@ It runs two programs, never through a shell. The arguments are fixed except the 
 ### What it reads
 
 - **From the session:** the usage Claude Code reports (cost, context, rate limits and when they reset), the model's name, the session id and working folder, the subagents that are running, and the token counts at the end of each turn.
+- **From Claude Code's own `~/.claude.json`:** only your account's plan type and rate-limit tier, once per load, to show the plan.
 - **What it never reads:** the text of your prompts, Claude's replies or tool calls.
 
 ### What it keeps

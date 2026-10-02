@@ -68,6 +68,8 @@ export type Snapshot = {
   model: string
   // The effort level, as the last prompt or tool call carried it
   effort?: string
+  // The Claude plan, as "Max 5x" or "Pro"
+  plan?: string
   startedAt: number
   now: number
   // The local date, "2026-10-02", and time, "11:42 AM"

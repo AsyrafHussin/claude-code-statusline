@@ -510,3 +510,22 @@ export const pixelsToCells = (picture: { width: number; height: number; pixels: 
   }
   return toBase64(new Uint8Array(words.buffer))
 }
+
+// The Claude plan, from Claude Code's own ~/.claude.json: "Max 5x", "Max 20x", "Pro", "Team",
+// "Enterprise", or null when the file says no plan (an API key, a missing account)
+export const planLabel = (configText: string): string | null => {
+  let account: { organizationType?: unknown; organizationRateLimitTier?: unknown } | undefined
+  try {
+    account = (JSON.parse(configText) as { oauthAccount?: typeof account }).oauthAccount
+  } catch {
+    return null
+  }
+  const type = typeof account?.organizationType === 'string' ? account.organizationType : ''
+  const tier = typeof account?.organizationRateLimitTier === 'string' ? account.organizationRateLimitTier : ''
+  if (type === 'claude_max') {
+    const times = /(\d+)x/.exec(tier)?.[1]
+    return times ? `Max ${times}x` : 'Max'
+  }
+  const names: Record<string, string> = { claude_pro: 'Pro', claude_team: 'Team', claude_enterprise: 'Enterprise' }
+  return names[type] ?? null
+}

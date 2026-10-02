@@ -22,6 +22,7 @@ import {
   parseShortstat,
   parseStatusV2,
   placeFolder,
+  planLabel,
   prettyModel,
   readConfig,
   runsOutIn,
@@ -421,3 +422,18 @@ describe('spotify', () => {
     expect([...words]).toEqual([0x2580, 0x112233, 0x445566])
   })
 })
+
+describe('plan', () => {
+  const config = (type: string, tier: string) =>
+    JSON.stringify({ oauthAccount: { organizationType: type, organizationRateLimitTier: tier, emailAddress: 'x' } })
+  test('names the plan from the account', () => {
+    expect(planLabel(config('claude_max', 'default_claude_max_5x'))).toBe('Max 5x')
+    expect(planLabel(config('claude_max', 'default_claude_max_20x'))).toBe('Max 20x')
+    expect(planLabel(config('claude_pro', ''))).toBe('Pro')
+    expect(planLabel(config('claude_team', ''))).toBe('Team')
+    expect(planLabel(config('something_else', ''))).toBe(null)
+    expect(planLabel('{}')).toBe(null)
+    expect(planLabel('not json')).toBe(null)
+  })
+})
+

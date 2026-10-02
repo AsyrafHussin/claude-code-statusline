@@ -24,6 +24,7 @@ import {
   fromBase64,
   parseStatusV2,
   placeFolder,
+  planLabel,
   prettyModel,
   readConfig,
   runsOutIn,
@@ -330,6 +331,15 @@ async function stepsOfAliases($: EngineInterface, dir: string, aliases: string[]
 
 const CHEER_MS = 3500
 
+// The Claude plan, from Claude Code's own config; only its account type and tier are read
+async function readPlan($: EngineInterface) {
+  if (runtime.plan !== undefined) return runtime.plan
+  const home = await $.env.get('HOME')
+  const text = home ? await $.fs.read(`${home}/.claude.json`).catch(() => '') : ''
+  runtime.plan = typeof text === 'string' ? planLabel(text) : null
+  return runtime.plan
+}
+
 async function readAndDraw($: EngineInterface) {
   const cwd = await $.session.cwd()
   const [usage, model, now, clock, repo, sessionId, agents] = await Promise.all([
@@ -364,6 +374,7 @@ async function readAndDraw($: EngineInterface) {
     git: repo,
     model: prettyModel(model),
     effort: runtime.effort,
+    plan: (await readPlan($)) ?? undefined,
     startedAt: usage.startedAt,
     now,
     day,

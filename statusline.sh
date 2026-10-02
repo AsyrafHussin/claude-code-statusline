@@ -177,8 +177,19 @@ if [ -n "$cwd" ] && status=$(git -C "$cwd" status --porcelain=v2 --branch --show
   add1 "${MAGENTA}${branch}${RST}${dirty}${push_status}"
 fi
 
-# Model
+# Model, and the Claude plan from Claude Code's own config (only the account type and tier are read)
 [ -n "$model" ] && add1 "${CYAN}${model}${RST}"
+plan=""
+if [ -f "$HOME/.claude.json" ]; then
+  IFS='|' read -r plan_type plan_tier < <(jq -r '.oauthAccount // {} | "\(.organizationType // "")|\(.organizationRateLimitTier // "")"' "$HOME/.claude.json" 2>/dev/null)
+  case "$plan_type" in
+    claude_max) times=$(printf '%s' "$plan_tier" | sed -nE 's/.*[^0-9]([0-9]+)x.*/\1/p'); plan="Max${times:+ ${times}x}" ;;
+    claude_pro) plan="Pro" ;;
+    claude_team) plan="Team" ;;
+    claude_enterprise) plan="Enterprise" ;;
+  esac
+fi
+[ -n "$plan" ] && add1 "${YELLOW}${plan}${RST}"
 
 # Session duration
 case "$duration_ms" in

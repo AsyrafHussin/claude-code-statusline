@@ -138,7 +138,7 @@ cd claude-code-statusline
 
 | Part | Description |
 |------|-------------|
-| **Top edge** | Repo name (with the subfolder dimmed when you're in one), branch, model and its effort; cost on the right |
+| **Top edge** | Repo name (with the subfolder dimmed when you're in one), branch, model with its effort and your Claude plan (Max 5x, Pro...); cost on the right |
 | **5h / 7d** | Rate limits as filling rings, with the reset countdown and the local reset time; `▲ out ~8h` when the pace would use it up before the reset, taking the faster of the whole window's pace and the last few hours' |
 | **ctx** | Context usage as a bar, with tokens used out of the window |
 | **Cost** | Session cost and hourly rate, plus today's and the last 30 days' spend across sessions; each with its tokens (read and written, cache included), counted from when the mod was installed |

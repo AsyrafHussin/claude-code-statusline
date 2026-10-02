@@ -77,6 +77,8 @@ const SWEAT_COLOR = '#60a5fa'
 const SPARK_COLOR = '#fde047'
 const SLEEP_COLOR = '#a1a1aa'
 const CLAWD_WIDTH = 11
+// Where the actions under the card start, and the Spotify text with them: past Clawd and the frame's edge
+const INDENT = CLAWD_WIDTH + CARD_INSET + 3
 const CLAWD_HEAD = ' ▐▛███▜▌ '
 const CLAWD_HEAD_BLINK = ' ▐█████▌ '
 const CLAWD_IDLE = { arms: ['▝', '▘'], legs: '  ▘▘ ▝▝  ' }
@@ -167,6 +169,7 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
     line(' ─ '),
     { text: `✦ ${s.model}`, color: COLORS.model },
     ...(effort ? [{ text: ` · ${effort}`, dim: true }] : []),
+    ...(s.plan ? [{ text: ' · ', dim: true }, { text: s.plan, color: CLAWD_COLOR, bold: true }] : []),
     { text: ' ' },
   ]
   // Top right: what the session, today and the history window have cost, each with its tokens
@@ -349,7 +352,9 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
   const drawMusic = (m: Music) => {
     const time = `${formatClock(m.positionMs)} / ${formatClock(m.durationMs)}`
     const hasArt = view.canDrawArt && Raster !== undefined && m.art !== null
-    const cells = Math.max(10, Math.min(PROGRESS_MAX, total - 4 - (hasArt ? ART_COLUMNS + 2 : 0) - time.length - 2))
+    // The text starts where the actions do, so its room is the band's width less that indent
+    const room = view.bodyColumns - 2 - INDENT - ENGINE_MARK_WIDTH
+    const cells = Math.max(10, Math.min(PROGRESS_MAX, room - time.length - 4))
     const filled = m.durationMs > 0 ? Math.min(cells, Math.round((m.positionMs / m.durationMs) * cells)) : 0
     const last = m.recent[0]
     const toggle = (key: MusicCommand, label: string, isOn: boolean) => (
@@ -357,12 +362,11 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
     )
     return (
       <Box>
-        {hasArt && m.art ? (
-          <Box marginRight={2} flexShrink={0}>
-            <Raster key="album-art" columns={ART_COLUMNS} rows={ART_ROWS} cells={m.art} />
-          </Box>
-        ) : null}
-        <Box flexDirection="column" flexGrow={1}>
+        {/* The album art sits under Clawd, in the same columns, so the text lines up with the actions */}
+        <Box width={INDENT} flexShrink={0} justifyContent="center">
+          {hasArt && m.art ? <Raster key="album-art" columns={ART_COLUMNS} rows={ART_ROWS} cells={m.art} /> : null}
+        </Box>
+        <Box flexDirection="column" width={room}>
           <Text wrap="truncate">
             <Text color={SPOTIFY_GREEN} bold>{'Spotify'}</Text>
             <Text dimColor>{m.isPlaying ? ' · playing   ' : ' · paused    '}</Text>
@@ -391,7 +395,7 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
             <Button key="music-louder" plain dimColor label="+" onPress={() => view.onMusic('louder')} />
             {last ? (
               <Text wrap="truncate" dimColor>
-                {`   last: ${last.name} — ${last.artist} · ${formatReset(Math.max(0, s.now - last.at))} ago`}
+                {`   last: ${last.name} — ${last.artist} · ${s.now - last.at < 60_000 ? 'just now' : `${formatReset(s.now - last.at)} ago`}`}
               </Text>
             ) : null}
           </Box>
@@ -434,7 +438,7 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
               {ctxFull && !isWorking && (
                 <Button
                   key="compact"
-                  label={view.isCompacting ? 'compacting…' : '🗜 compact'}
+                  label={view.isCompacting ? 'compacting…' : 'compact'}
                   hotkey="c"
                   variant="primary"
                   onPress={view.onCompact}
@@ -447,7 +451,7 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
         </Box>
       </Box>
       {/* Drawn plain, as the band's own dim text: "1: push · 2: find bugs · ...", the repo's switches on the right */}
-      <Box marginLeft={CLAWD_WIDTH + CARD_INSET + 3} width={total - 4} justifyContent="space-between">
+      <Box marginLeft={INDENT} width={total - 4} justifyContent="space-between">
         <Box>
           {view.actions.flatMap((action, i) => [
             ...(i === 0 ? [] : [<Text key={`sep-${action.key}`} dimColor>{' · '}</Text>]),
@@ -475,11 +479,7 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
         )}
       </Box>
       {/* Under the actions, while Spotify plays: its own row, from the album art to the Spotify mark */}
-      {view.music && (
-        <Box marginLeft={CLAWD_WIDTH + CARD_INSET + 3} marginTop={1} width={total - 4}>
-          {drawMusic(view.music)}
-        </Box>
-      )}
+      {view.music && <Box marginTop={1}>{drawMusic(view.music)}</Box>}
     </Box>
   )
 }
