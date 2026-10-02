@@ -1,12 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { CostLedger, Limit, Snapshot } from '../types'
+import type { CostLedger, Limit, PaceLog, Snapshot, TokenLedger } from '../types'
 
 const snap = atom({ plugin: 'statusline-band', key: 'snap' } as const, null)
 const isCompacting = atom({ plugin: 'statusline-band', key: 'isCompacting' } as const, false)
 const frame = atom({ plugin: 'statusline-band', key: 'frame' } as const, 0)
 const isBlinking = atom({ plugin: 'statusline-band', key: 'isBlinking' } as const, false)
+const lastTurn = atom({ plugin: 'statusline-band', key: 'lastTurn' } as const, null)
 
 const LIMIT_LABELS: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }
 const RINGS = ['○', '◔', '◑', '◕', '●']
@@ -14,6 +15,11 @@ const BAR_CELLS = 8
 const WINDOW_MS: Record<string, number> = { five_hour: 5 * 3_600_000, seven_day: 7 * 86_400_000 }
 // Too early in a window, one burst would read as a runaway pace
 const PACE_MIN_ELAPSED = 0.05
+// The recent pace: readings kept every 5 minutes over the last 3 hours, read once they span 30 minutes
+const PACE_KEY = 'pace-v1'
+const PACE_SAMPLE_MS = 5 * 60_000
+const PACE_LOOKBACK_MS = 3 * 3_600_000
+const PACE_MIN_SPAN_MS = 30 * 60_000
 const ALERT_THRESHOLDS = [80, 95]
 const COMPACT_AT = 80
 const LEDGER_DAYS = 62
@@ -21,6 +27,8 @@ const ROLLING_DAYS = 30
 const LEDGER_SESSIONS = 100
 // v2: the first ledger counted a resumed session's whole past cost as today's
 const COST_KEY = 'costs-v2'
+// Tokens are counted by the mod at each turn's end, so they start from when it was installed
+const TOKEN_KEY = 'tokens-v1'
 const GIT_TIMEOUT = { timeoutMs: 5000 }
 // Fetched in the background so "behind" stays true; never prompts for credentials
 const FETCH_EVERY_MS = 5 * 60_000
@@ -98,13 +106,15 @@ const formatReset = (ms: number) => {
   return `${mins}m`
 }
 
-// How long until a window runs out at the pace used so far, when that comes before its reset
-const runsOutIn = (kind: string, pct: number, resetMs: number) => {
+// How long until a window runs out, when that comes before its reset: at the faster of the
+// pace across the whole window and the recent pace (percent per millisecond)
+const runsOutIn = (kind: string, pct: number, resetMs: number, recentRate?: number) => {
   const windowMs = WINDOW_MS[kind]
   if (windowMs === undefined || pct <= 0 || pct >= 100) return undefined
   const elapsed = windowMs - resetMs
   if (elapsed < windowMs * PACE_MIN_ELAPSED) return undefined
-  const left = ((100 - pct) / pct) * elapsed
+  const rate = Math.max(pct / elapsed, recentRate ?? 0)
+  const left = (100 - pct) / rate
   return left < resetMs ? left : undefined
 }
 
@@ -207,6 +217,44 @@ async function recordCost($: EngineInterface, sessionId: string, usd: number, da
   return ledger
 }
 
+// Adds a turn's tokens to its session's and today's totals, kept across sessions
+async function recordTokens($: EngineInterface, sessionId: string, day: string, tokens: number) {
+  const ledger = ((await $.store.get(TOKEN_KEY)) as TokenLedger | undefined) ?? { days: {}, sessions: {} }
+  ledger.days[day] = (ledger.days[day] ?? 0) + tokens
+  ledger.sessions[sessionId] = (ledger.sessions[sessionId] ?? 0) + tokens
+  const days = Object.keys(ledger.days).sort()
+  for (const old of days.slice(0, Math.max(0, days.length - LEDGER_DAYS))) delete ledger.days[old]
+  const sessions = Object.keys(ledger.sessions)
+  for (const old of sessions.slice(0, Math.max(0, sessions.length - LEDGER_SESSIONS))) delete ledger.sessions[old]
+  await $.store.set(TOKEN_KEY, ledger)
+}
+
+// Keeps a reading of each window every few minutes, across sessions, and gives each window's
+// recent pace in percent per millisecond: from the oldest reading in the lookback to now
+async function recordPace($: EngineInterface, limits: Limit[], now: number) {
+  const log = ((await $.store.get(PACE_KEY)) as PaceLog | undefined) ?? {}
+  const next: PaceLog = {}
+  const rates: Record<string, number> = {}
+  let isChanged = false
+  for (const l of limits) {
+    if (!l.resetsAt) continue
+    const id = `${l.kind}@${l.resetsAt}`
+    const kept = (log[id] ?? []).filter(r => now - r.t <= PACE_LOOKBACK_MS)
+    const last = kept[kept.length - 1]
+    if (last === undefined || now - last.t >= PACE_SAMPLE_MS) {
+      kept.push({ t: now, pct: l.percent })
+      isChanged = true
+    }
+    next[id] = kept
+    const oldest = kept[0]
+    if (oldest !== undefined && now - oldest.t >= PACE_MIN_SPAN_MS && l.percent > oldest.pct) {
+      rates[l.kind] = (l.percent - oldest.pct) / (now - oldest.t)
+    }
+  }
+  if (isChanged || Object.keys(log).length !== Object.keys(next).length) await $.store.set(PACE_KEY, next)
+  return rates
+}
+
 // Toasts once per window and threshold, even across sessions
 async function alertLimits($: EngineInterface, limits: Limit[]) {
   const alerted = ((await $.store.get('alerted')) as string[] | undefined) ?? []
@@ -256,9 +304,10 @@ async function refresh($: EngineInterface) {
     const midnight = now - ((Number(hh) * 60 + Number(mm)) * 60 + Number(ss)) * 1000
     const costUsd = usage.cost?.usd ?? null
     const ledger = costUsd !== null ? await recordCost($, sessionId, costUsd, day, usage.startedAt >= midnight) : null
+    const tokenLedger = (await $.store.get(TOKEN_KEY)) as TokenLedger | undefined
     // The ledger's days are local dates, so stepping back on a UTC calendar keeps them aligned
     const since = new Date(Date.parse(`${day}T00:00:00Z`) - (ROLLING_DAYS - 1) * 86_400_000).toISOString().slice(0, 10)
-    const limits = await Promise.all(
+    const readings = await Promise.all(
       usage.rateLimits.map(async (l): Promise<Limit> => ({
         kind: l.kind,
         percent: l.percentUsed,
@@ -266,6 +315,8 @@ async function refresh($: EngineInterface) {
         resetsOn: l.resetsAt ? await localResetTime($, l.resetsAt, now) : undefined,
       })),
     )
+    const rates = await recordPace($, readings, now)
+    const limits = readings.map(l => ({ ...l, recentRate: rates[l.kind] }))
     const ctx = usage.context
 
     const next: Snapshot = {
@@ -279,6 +330,14 @@ async function refresh($: EngineInterface) {
         ctx.percent !== undefined ? { percent: ctx.percent, tokens: ctx.tokens ?? 0, window: ctx.window } : null,
       costUsd,
       todayUsd: ledger?.days[day] ?? null,
+      tokens: {
+        session: tokenLedger?.sessions[sessionId] ?? 0,
+        today: tokenLedger?.days[day] ?? 0,
+        rolling: Object.entries(tokenLedger?.days ?? {}).reduce(
+          (sum, [d, n]) => (d >= since && d <= day ? sum + n : sum),
+          0,
+        ),
+      },
       rollingUsd: ledger
         ? Object.entries(ledger.days).reduce((sum, [d, usd]) => (d >= since && d <= day ? sum + usd : sum), 0)
         : null,
@@ -329,6 +388,13 @@ export const register: Register = on => {
     const ran = await next(e)
     runner?.cancel()
     runner = null
+    const used = ran.usage
+    if (used) {
+      const input = used.input_tokens + used.cache_read_input_tokens + used.cache_creation_input_tokens
+      await update($, lastTurn, () => ({ input, output: used.output_tokens }))
+      const [sessionId, clock] = await Promise.all([$.session.id(), $.process.run(['date', '+%Y-%m-%d'])])
+      await recordTokens($, sessionId, clock.stdout.trim(), input + used.output_tokens)
+    }
     void refresh($)
     return ran
   })
@@ -344,6 +410,7 @@ export const register: Register = on => {
     const s = await read($, snap)
     if (e.props.hasSurvey || s === null) return next(e)
     const compacting = await read($, isCompacting)
+    const turn = await read($, lastTurn)
 
     const { Box, Button, Text } = $.ui.resolve(e)
 
@@ -366,7 +433,7 @@ export const register: Register = on => {
       ...(added > 0 ? [{ text: ` +${added}`, color: COLORS.ok }] : []),
       ...(removed > 0 ? [{ text: ` −${removed}`, color: COLORS.hot }] : []),
     ]
-    // Each git fact is its own group: uncommitted work, commits to push, commits to pull
+    // Each git fact is its own group: uncommitted work, commits to push and pull, then the last commit
     const gitGroups: Seg[][] =
       g === null
         ? []
@@ -384,13 +451,13 @@ export const register: Register = on => {
               : []),
             ...(g.behind > 0 ? [[{ text: `↓ ${g.behind} behind`, color: COLORS.hot }]] : []),
             ...(g.stashed > 0 ? [[{ text: `≡ ${g.stashed} stash`, color: COLORS.model }]] : []),
+            ...(g.changed === 0 && g.hasUpstream && g.ahead === 0 && g.behind === 0
+              ? [[{ text: '✓ synced', color: COLORS.ok }]]
+              : []),
             ...(g.lastCommitAt !== null
               ? [[{ text: `committed ${s.now - g.lastCommitAt < 60_000 ? 'just now' : `${formatReset(s.now - g.lastCommitAt)} ago`}`, dim: true }]]
               : []),
             ...(!g.hasUpstream ? [[{ text: 'no upstream', color: COLORS.warn }]] : []),
-            ...(g.changed === 0 && g.hasUpstream && g.ahead === 0 && g.behind === 0
-              ? [[{ text: '✓ synced', color: COLORS.ok }]]
-              : []),
           ]
     const title: Seg[] = [
       line('╭─ '),
@@ -404,27 +471,52 @@ export const register: Register = on => {
     // Top right: what the session, today and the last 30 days have cost
     const hours = (s.now - s.startedAt) / 3_600_000
     const cost: Seg[] = []
+    const costShort: Seg[] = []
+    // A snapshot kept from before a reload may predate the token counts
+    const counted = (s.tokens as Snapshot['tokens'] | undefined) ?? { session: 0, today: 0, rolling: 0 }
     if (s.costUsd !== null) {
-      cost.push({ text: ' ' }, { text: formatUsd(s.costUsd), color: COLORS.ok, bold: true }, { text: ' session', dim: true })
+      // Each total is its cost, then its tokens once any are counted
+      const tokens = (n: number): Seg[] => (n > 0 ? [{ text: ` ${formatTokens(n)}`, color: COLORS.model }] : [])
+      cost.push(
+        { text: ' ' },
+        { text: formatUsd(s.costUsd), color: COLORS.ok, bold: true },
+        ...tokens(counted.session),
+        { text: ' session', dim: true },
+      )
+      costShort.push(...cost, { text: ' ' })
       if (hours > 0.05) cost.push({ text: ` ${formatUsd(s.costUsd / hours)}/h`, dim: true })
-      const addTotal = (usd: number, label: string) =>
-        cost.push({ text: ' · ', dim: true }, { text: formatUsd(usd), color: COLORS.ok }, { text: ` ${label}`, dim: true })
+      const addTotal = (usd: number, n: number, label: string) =>
+        cost.push(
+          { text: ' · ', dim: true },
+          { text: formatUsd(usd), color: COLORS.ok },
+          ...tokens(n),
+          { text: ` ${label}`, dim: true },
+        )
       // Today only when it adds to the session; the 30 days always, even while it matches today
-      if (s.todayUsd !== null && s.todayUsd - s.costUsd >= 0.01) addTotal(s.todayUsd, 'today')
-      if (s.rollingUsd !== null) addTotal(s.rollingUsd, `${ROLLING_DAYS}d`)
+      if (s.todayUsd !== null && s.todayUsd - s.costUsd >= 0.01) addTotal(s.todayUsd, counted.today, 'today')
+      if (s.rollingUsd !== null) addTotal(s.rollingUsd, counted.rolling, `${ROLLING_DAYS}d`)
       cost.push({ text: ' ' })
     }
     // When the whole line does not fit beside the title, the session cost alone still shows
     const fits = (segs: Seg[]) => width(title) + width(segs) + 3 <= total
-    const costShort = cost.slice(0, 3).concat(cost.length > 0 ? [{ text: ' ' }] : [])
     const right = fits(cost) ? cost : fits(costShort) ? costShort : []
     const top = [...title, line('─'.repeat(Math.max(1, total - width(title) - width(right) - 2))), ...right, line('─╮')]
 
-    // Bottom edge: the git groups on the left, how long the session has run and the time on the right
+    // Bottom edge: the git groups on the left; the last turn's tokens, how long the session has run and the time on the right
     const changes: Seg[] =
       gitGroups.length === 0 ? [] : [{ text: ' ' }, ...gitGroups.flatMap((group, i) => (i === 0 ? group : [sep, ...group])), { text: ' ' }]
     const clock: Seg[] = [
       { text: ' ' },
+      // The last turn's tokens, its responses summed: read in (cache included) and written out
+      ...(turn
+        ? [
+            { text: 'in ', dim: true },
+            { text: formatTokens(turn.input), color: COLORS.model },
+            { text: ' · out ', dim: true },
+            { text: formatTokens(turn.output), color: COLORS.model },
+            { text: ' · ', dim: true },
+          ]
+        : []),
       { text: `session ${formatDuration(s.now - s.startedAt)}`, dim: true },
       { text: ' · ', dim: true },
       { text: s.time, dim: true },
@@ -472,7 +564,7 @@ export const register: Register = on => {
         const resetMs = l.resetsAt ? Date.parse(l.resetsAt) - s.now : 0
         const name = LIMIT_LABELS[l.kind] ?? l.kind
         if (resetMs <= 0) return stat(l.percent, name)
-        const out = runsOutIn(l.kind, l.percent, resetMs)
+        const out = runsOutIn(l.kind, l.percent, resetMs, l.recentRate)
         return stat(l.percent, `${name} · reset ${formatReset(resetMs)}`, [
           ...(l.resetsOn ? [{ text: ` (${l.resetsOn})`, dim: true }] : []),
           ...(out !== undefined ? [{ text: ` ▲ out ~${formatReset(out)}`, color: COLORS.hot, bold: true }] : []),

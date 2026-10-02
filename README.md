@@ -128,20 +128,20 @@ cd claude-code-statusline
 `mod/statusline-band` is a [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) that shows the same information as a panel above the prompt, with Clawd, the Claude Code mascot, beside it. It needs Claude Code v2.1.287 or later.
 
 ```
-              ╭─ ◆ claude-code-statusline ─ main ─ ✦ Opus 5.5 ────────── $7.01 session $12.09/h · $9.06 today · $84.30 30d ─╮
-   ▐▛███▜▌    │                                                                                                                 │
-  ▝▜ A H ▛▘   │  ◑ 47% 5h · reset 1h1m (11:09 AM)   │   ● 94% 7d · reset 1d9h (Sat 8:00 PM) ▲ out ~8h   │   ctx ━━━━━━━━ 24% 238k/1.0m  │
-    ▘▘ ▝▝     │                                                                                                                 │
-              ╰─ ✎ 2 files +57 −16 · ↑ 3 commits +518 · committed 2h ago ───────────────────────── session 34m · 10:08 AM ─╯
+              ╭─ ◆ claude-code-statusline ─ main ─ ✦ Opus 5.5 ───────────────────────────── $7.01 2.1m session $12.09/h · $9.06 4.3m today · $84.30 41m 30d ─╮
+   ▐▛███▜▌    │                                                                                                                                              │
+  ▝▜ A H ▛▘   │  ◑ 47% 5h · reset 1h1m (11:09 AM)   │   ● 94% 7d · reset 1d9h (Sat 8:00 PM) ▲ out ~8h   │   ctx ━━━━━━━━ 24% 238k/1.0m                       │
+    ▘▘ ▝▝     │                                                                                                                                              │
+              ╰─ ✎ 2 files +57 −16 · ↑ 3 commits +518 · committed 2h ago ──────────────────────────────────────── in 1.2m · out 4k · session 34m · 10:08 AM ─╯
 ```
 
 | Part | Description |
 |------|-------------|
 | **Top edge** | Repo name (with the subfolder dimmed when you're in one), branch, model; cost on the right |
-| **5h / 7d** | Rate limits as filling rings, with the reset countdown and the local reset time; `▲ out ~8h` when the pace so far would use it up before the reset |
+| **5h / 7d** | Rate limits as filling rings, with the reset countdown and the local reset time; `▲ out ~8h` when the pace would use it up before the reset, taking the faster of the whole window's pace and the last few hours' |
 | **ctx** | Context usage as a bar, with tokens used out of the window |
-| **Cost** | Session cost and hourly rate, plus today's and the last 30 days' spend across sessions |
-| **Bottom edge** | Uncommitted files and lines, unpushed commits and their lines, commits behind, stashes, time since the last commit; then session duration and the time |
+| **Cost** | Session cost and hourly rate, plus today's and the last 30 days' spend across sessions; each with its tokens (read and written, cache included), counted from when the mod was installed |
+| **Bottom edge** | The last reply's input and output tokens (input includes cache) on the right beside the session time; uncommitted files and lines, unpushed commits and their lines, commits behind, stashes, time since the last commit; then session duration and the time |
 | **Card** | A near-black card behind the frame; `PAD_ROWS` sets the empty rows around the stats and `COLORS.card` the color |
 | **Clawd** | Stands and blinks when idle, runs while Claude works; the border turns orange too |
 
