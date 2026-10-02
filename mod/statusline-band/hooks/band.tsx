@@ -260,8 +260,8 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
     { text: ' ' },
   ]
   // On its right, after the time, the button that shrinks the card to one line
-  const fill = Math.max(1, total - width(changes) - width(clock) - 2 - 'minimize ─╯'.length)
-  const bottom = [line('╰─'), ...changes, line('─'.repeat(fill)), ...clock]
+  const fill = Math.max(1, total - width(changes) - width(clock) - 2 - '· minimize ─╯'.length)
+  const bottom = [line('╰─'), ...changes, line('─'.repeat(fill)), ...clock, { text: '· ', dim: true }]
 
   // Shrunk: one line from the band's left edge, in place of the card and Clawd: the repo and branch, the model, each limit and the
   // context as a percent, the first git fact, and the session cost, with the button that brings it back
