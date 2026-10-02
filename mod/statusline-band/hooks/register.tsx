@@ -159,6 +159,8 @@ let lastActiveAt: number | null = null
 let cheerUntil = 0
 // Uncommitted files when the turn began, so its end can tell whether the turn changed any
 let changedAtStart = 0
+// The permission mode, as the last prompt carried it: under bypass the band asks only where a switch says ask
+let permissionMode: string | undefined
 
 // The refresh and blink timers, started in session.start so they outlive any one event.
 // The other hooks call it too, for a hot reload, which starts the module over without one
@@ -690,6 +692,11 @@ export const register: Register = (on, options) => {
     return { sections: [...composed.sections, { id: 'statusline-band:git', text, scope: 'session' as const }] }
   })
 
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    permissionMode = e.permission_mode
+    return next(e)
+  })
+
   // The switches at work. A git add, commit or push asks while its switch is on ask. On auto it runs
   // without a prompt only in its plain form (git -C /path add|commit -m '...'|push, joined by &&); any
   // other shape, a force push among them, asks whatever the switch says
@@ -709,6 +716,11 @@ export const register: Register = (on, options) => {
     const auto = plain !== null && root !== null ? await readGitAuto($, root) : REVIEW
     const decision = gitDecision(plain, loose, auto)
     if (decision === 'pass') return below
+    // Under bypass, the person chose no prompts: only a switch they set to ask still asks
+    if (decision === 'ask' && permissionMode === 'bypassPermissions') {
+      const repoAuto = root !== null ? await readGitAuto($, root) : REVIEW
+      if ((plain?.steps ?? loose).every(step => repoAuto[step])) return below
+    }
     if (decision === 'allow') return { ...kept, allow: true }
     // Under the dialog: what this step takes with it
     if (root !== null) {

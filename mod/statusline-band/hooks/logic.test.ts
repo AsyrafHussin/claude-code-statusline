@@ -193,6 +193,14 @@ describe('git switches', () => {
     }
   })
 
+  test('reading steps ride along without asking', () => {
+    expect(decide('git -C /a push && git -C /a log --oneline -1', all)).toBe('allow')
+    expect(decide("git add . && git commit -m 'x' && git status --short", { commit: true, push: false })).toBe('allow')
+    expect(decide('git status && git diff --stat', none)).toBe('pass')
+    expect(decide('git diff --output=/tmp/o && git push', all)).toBe('ask')
+    expect(decide('git log --ext-diff && git push', all)).toBe('ask')
+  })
+
   test('a repo path is absolute and plain, the same for every step', () => {
     expect(parsePlainGit('git -C repo push')).toBe(null)
     expect(parsePlainGit("git -C '/code/my repo' push")).toBe(null)

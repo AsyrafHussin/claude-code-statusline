@@ -140,8 +140,14 @@ const plainWords = (command: string): string[] | null => {
 const NAME = /^[\w.@/%=,][\w.@/%=,-]*$/
 const ABSOLUTE = /^\/[\w.@/%=,-]+$/
 
-// One git step in its strict form, or null: add files, commit with -m messages, push a branch
-const plainStep = (args: string[]): { step: GitStep; dir?: string } | null => {
+// Flags that only shape what a reading step prints; anything else (--output writes a file) is not plain
+const READ_FLAG =
+  /^(?:-q|--quiet|--oneline|--stat|--shortstat|--short|--porcelain|--name-only|--name-status|--graph|--decorate|--no-color|-n|-\d+|--format=[^\s]*|--pretty=[^\s]*)$/
+const READ_VERBS = new Set(['status', 'log', 'diff', 'show'])
+
+// One git step in its strict form, or null: add files, commit with -m messages, push a branch, or a
+// step that only reads (status, log, diff, show), which the switches do not govern
+const plainStep = (args: string[]): { step?: GitStep; dir?: string } | null => {
   let rest = args
   let dir: string | undefined
   if (rest[0] === '-C') {
@@ -150,6 +156,9 @@ const plainStep = (args: string[]): { step: GitStep; dir?: string } | null => {
     rest = rest.slice(2)
   }
   const [verb, ...tail] = rest
+  if (verb !== undefined && READ_VERBS.has(verb)) {
+    return tail.every(arg => READ_FLAG.test(arg) || NAME.test(arg)) ? { dir } : null
+  }
   if (verb === 'add') {
     const isPlain = tail.length > 0 && tail.every(arg => arg === '-A' || arg === '--all' || NAME.test(arg))
     return isPlain ? { step: 'commit', dir } : null
@@ -194,7 +203,7 @@ export const parsePlainGit = (command: string): PlainGit | null => {
     if (segment[0] !== 'git') return null
     const step = plainStep(segment.slice(1))
     if (step === null) return null
-    steps.add(step.step)
+    if (step.step) steps.add(step.step)
     dirs.add(step.dir)
     segment = []
   }
