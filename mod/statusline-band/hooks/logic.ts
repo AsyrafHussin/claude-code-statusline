@@ -496,3 +496,15 @@ export const pixelsToCells = (picture: { width: number; height: number; pixels: 
   }
   return toBase64(new Uint8Array(words.buffer))
 }
+
+// One bar of a small chart, top row first: `rows` cells tall, each cell in eighths (▁ to █), so a bar
+// three rows tall has 24 steps. Any value above zero shows at least the lowest step
+const EIGHTHS = '▁▂▃▄▅▆▇█'
+export const barColumn = (value: number, most: number, rows: number) => {
+  const steps = rows * 8
+  const height = value <= 0 || most <= 0 ? 0 : Math.max(1, Math.round((value / most) * steps))
+  return Array.from({ length: rows }, (_, i) => {
+    const level = Math.min(8, Math.max(0, height - (rows - 1 - i) * 8))
+    return level === 0 ? ' ' : EIGHTHS[level - 1] ?? '█'
+  })
+}

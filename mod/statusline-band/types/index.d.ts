@@ -73,6 +73,8 @@ export type Snapshot = {
   todayUsd: number | null
   // Tokens read and written, cache included, as counted since the mod was installed
   tokens: { session: number; today: number; rolling: number }
+  // Each of the last 7 days, oldest first, today last: cost and tokens
+  week?: HistoryDay[]
   // Spend over the last 30 days, today included
   rollingUsd: number | null
   limits: Limit[]

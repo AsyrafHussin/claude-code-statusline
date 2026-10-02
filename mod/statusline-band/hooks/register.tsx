@@ -375,6 +375,10 @@ async function readAndDraw($: EngineInterface) {
       rolling: sumDays(tokenLedger?.days ?? {}, since, day),
     },
     rollingUsd: ledger ? sumDays(ledger.days, since, day) : null,
+    week: Array.from({ length: 7 }, (_, i) => {
+      const d = shiftDay(day, i - 6)
+      return { day: d, usd: ledger?.days[d] ?? 0, tokens: tokenLedger?.days[d] ?? 0 }
+    }),
     limits,
     agents: agents.filter(a => a.status === 'running').length,
   }

@@ -3,6 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   aliasSteps,
   barCells,
+  barColumn,
   cleanCommitMessage,
   gitGuide,
   dayLabel,
@@ -409,3 +410,13 @@ describe('spotify', () => {
     expect([...words]).toEqual([0x2580, 0x112233, 0x445566])
   })
 })
+
+describe('week chart', () => {
+  test('a bar in eighths, top row first', () => {
+    expect(barColumn(24, 24, 3)).toEqual(['█', '█', '█'])
+    expect(barColumn(12, 24, 3)).toEqual([' ', '▄', '█'])
+    expect(barColumn(0, 24, 3)).toEqual([' ', ' ', ' '])
+    expect(barColumn(0.01, 24, 3)).toEqual([' ', ' ', '▁'])
+  })
+})
+
