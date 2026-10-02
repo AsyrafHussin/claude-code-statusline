@@ -2,7 +2,7 @@ export type Limit = { kind: string; percent: number; resetsAt?: string; resetsOn
 
 export type Snapshot = {
   folder: string
-  git: { branch: string; isDirty: boolean; hasUpstream: boolean; ahead: number; behind: number; added: number; removed: number } | null
+  git: { branch: string; changed: number; hasUpstream: boolean; ahead: number; behind: number; added: number; removed: number } | null
   model: string
   startedAt: number
   now: number

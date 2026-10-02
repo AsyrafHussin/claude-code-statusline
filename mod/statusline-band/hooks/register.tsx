@@ -98,8 +98,8 @@ let isRefreshing = false
 let runner: { cancel: () => void } | null = null
 let hasTimers = false
 
-// The refresh and blink timers. Started by whichever event comes first, since a hot reload
-// starts the module over without a new session.start
+// The refresh and blink timers, started in session.start so they outlive any one event.
+// The other hooks call it too, for a hot reload, which starts the module over without one
 function startTimers($: EngineInterface) {
   if (hasTimers) return
   hasTimers = true
@@ -128,7 +128,9 @@ async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']
   const hasUpstream = counts.exitCode === 0
   const [ahead = 0, behind = 0] = hasUpstream ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0]
 
-  return { branch, isDirty: status.stdout.trim() !== '', hasUpstream, ahead, behind, added, removed }
+  const changed = status.stdout.split('\n').filter(row => row.trim() !== '').length
+
+  return { branch, changed, hasUpstream, ahead, behind, added, removed }
 }
 
 // Adds what this session spent since its last reading to today's total, kept across sessions.
@@ -180,7 +182,7 @@ async function localDateTime($: EngineInterface, iso: string) {
   return exitCode === 0 ? stdout.trim() : undefined
 }
 
-async function refresh($: EngineInterface, isTurnEnd = false) {
+async function refresh($: EngineInterface) {
   if (isRefreshing) return
   isRefreshing = true
   try {
@@ -226,10 +228,6 @@ async function refresh($: EngineInterface, isTurnEnd = false) {
     }
     await update($, snap, () => next)
     await alertLimits($, limits)
-    if (isTurnEnd && next.context) {
-      const pct = next.context.percent
-      await update($, history, list => [...list, pct].slice(-HISTORY_LEN))
-    }
   } finally {
     isRefreshing = false
   }
@@ -273,7 +271,11 @@ export const register: Register = on => {
     const ran = await next(e)
     runner?.cancel()
     runner = null
-    void refresh($, true)
+    // Recorded here rather than in refresh, which skips while another refresh runs
+    const { context } = await $.session.usage()
+    const pct = context.percent
+    if (pct !== undefined) await update($, history, list => [...list, pct].slice(-HISTORY_LEN))
+    void refresh($)
     return ran
   })
 
@@ -312,19 +314,20 @@ export const register: Register = on => {
         : [
             line(' ─ '),
             { text: ` ${g.branch}`, color: COLORS.branch },
-            ...(g.isDirty
+            // Uncommitted files and lines, then what is unpushed or behind, each shown on its own
+            ...(g.changed > 0
               ? [
-                  { text: ' ●', color: COLORS.hot },
+                  { text: ` ● ${g.changed} uncommitted`, color: COLORS.hot },
                   ...(g.added > 0 ? [{ text: ` +${g.added}`, color: COLORS.ok }] : []),
                   ...(g.removed > 0 ? [{ text: ` −${g.removed}`, color: COLORS.hot }] : []),
                 ]
-              : !g.hasUpstream
-                ? [{ text: ' ↑', color: COLORS.warn }]
-                : [
-                    ...(g.ahead > 0 ? [{ text: ` ↑${g.ahead}`, color: COLORS.warn }] : []),
-                    ...(g.behind > 0 ? [{ text: ` ↓${g.behind}`, color: COLORS.hot }] : []),
-                    ...(g.ahead === 0 && g.behind === 0 ? [{ text: ' ✓', color: COLORS.ok }] : []),
-                  ]),
+              : []),
+            ...(!g.hasUpstream ? [{ text: ' ↑ no upstream', color: COLORS.warn }] : []),
+            ...(g.ahead > 0 ? [{ text: ` ↑${g.ahead} unpushed`, color: COLORS.warn }] : []),
+            ...(g.behind > 0 ? [{ text: ` ↓${g.behind} behind`, color: COLORS.hot }] : []),
+            ...(g.changed === 0 && g.hasUpstream && g.ahead === 0 && g.behind === 0
+              ? [{ text: ' ✓ synced', color: COLORS.ok }]
+              : []),
           ]
     const title: Seg[] = [
       line('╭─ '),
