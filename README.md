@@ -141,11 +141,13 @@ cd claude-code-statusline
 | **5h / 7d** | Rate limits as filling rings, with the reset countdown and the local reset time; `▲ out ~8h` when the pace would use it up before the reset, taking the faster of the whole window's pace and the last few hours' |
 | **ctx** | Context usage as a bar, with tokens used out of the window |
 | **Cost** | Session cost and hourly rate, plus today's and the last 30 days' spend across sessions; each with its tokens (read and written, cache included), counted from when the mod was installed |
-| **Bottom edge** | The last reply's input and output tokens (input includes cache) on the right beside the session time; uncommitted files and lines, unpushed commits and their lines, commits behind, stashes, time since the last commit; then session duration and the time |
+| **Bottom edge** | Running subagents; the last reply's input (with the cached share) and output tokens on the right beside the session time; uncommitted files and lines, unpushed commits and their lines, commits behind, stashes, time since the last commit; then session duration and the time |
 | **Card** | A near-black card behind the frame; `PAD_ROWS` sets the empty rows around the stats and `COLORS.card` the color |
 | **Clawd** | Stands and blinks when idle, runs while Claude works; the border turns orange too |
 
-It fetches the upstream in the background every 5 minutes (never prompting for credentials) so `behind` stays current. It also toasts once when a rate limit passes 80% and 95%, and shows a `compact` button when context passes 80%.
+Hover over a rate limit for its pace: across the window, over the last 3 hours, and when it would run out. Click the `30d` label on the top right, or run `/usage-history`, to open a pane with each of the last 30 days' cost and tokens. Running subagents show on the bottom left as `↻ 2 agents`, and the last reply's input shows how much came from the cache.
+
+It fetches the upstream in the background every 5 minutes (never prompting for credentials) so `behind` stays current. It also toasts once when a rate limit passes 80% and 95%, and once when its pace would use it up before the reset, and shows a `compact` button when context passes 80%.
 
 To load it in every session, add its folder to the `env` block of `~/.claude/settings.json` (and remove `statusLine` if you no longer want the Bash version as well):
 

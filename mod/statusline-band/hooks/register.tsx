@@ -1,13 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { CostLedger, Limit, PaceLog, Snapshot, TokenLedger } from '../types'
+import type { CostLedger, HistoryDay, Limit, PaceLog, Snapshot, TokenLedger } from '../types'
 
 const snap = atom({ plugin: 'statusline-band', key: 'snap' } as const, null)
 const isCompacting = atom({ plugin: 'statusline-band', key: 'isCompacting' } as const, false)
 const frame = atom({ plugin: 'statusline-band', key: 'frame' } as const, 0)
 const isBlinking = atom({ plugin: 'statusline-band', key: 'isBlinking' } as const, false)
 const lastTurn = atom({ plugin: 'statusline-band', key: 'lastTurn' } as const, null)
+const history = atom({ plugin: 'statusline-band', key: 'history' } as const, [])
 
 const LIMIT_LABELS: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }
 const RINGS = ['○', '◔', '◑', '◕', '●']
@@ -24,6 +25,11 @@ const ALERT_THRESHOLDS = [80, 95]
 const COMPACT_AT = 80
 const LEDGER_DAYS = 62
 const ROLLING_DAYS = 30
+// The pane with each day's cost and tokens, opened by /usage-history or the "30d" label
+const HISTORY_PANE = 'usage-history'
+const HISTORY_BAR = 30
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const LEDGER_SESSIONS = 100
 // v2: the first ledger counted a resumed session's whole past cost as today's
 const COST_KEY = 'costs-v2'
@@ -117,6 +123,19 @@ const runsOutIn = (kind: string, pct: number, resetMs: number, recentRate?: numb
   const left = (100 - pct) / rate
   return left < resetMs ? left : undefined
 }
+
+// A local date ("2026-10-02") moved by whole days; a UTC calendar keeps the steps exact
+const shiftDay = (day: string, by: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + by * 86_400_000).toISOString().slice(0, 10)
+
+// "2026-10-02" as "Fri 02 Oct"
+const dayLabel = (day: string) => {
+  const date = new Date(`${day}T00:00:00Z`)
+  return `${WEEKDAYS[date.getUTCDay()]} ${day.slice(8)} ${MONTHS[date.getUTCMonth()]}`
+}
+
+// A pace in percent per millisecond, as "1.20%/h"
+const perHour = (rate: number) => `${(rate * 3_600_000).toFixed(2)}%/h`
 
 // Filled cells for a percentage; any use at all shows at least one
 const barCells = (pct: number) => (pct <= 0 ? 0 : Math.min(BAR_CELLS, Math.max(1, Math.round((pct / 100) * BAR_CELLS))))
@@ -229,6 +248,19 @@ async function recordTokens($: EngineInterface, sessionId: string, day: string, 
   await $.store.set(TOKEN_KEY, ledger)
 }
 
+// Gathers each of the last 30 days' cost and tokens from the ledgers, then opens the pane
+async function openHistory($: EngineInterface) {
+  const [costs, tokens, clock] = await Promise.all([
+    $.store.get(COST_KEY) as Promise<CostLedger | undefined>,
+    $.store.get(TOKEN_KEY) as Promise<TokenLedger | undefined>,
+    $.process.run(['date', '+%Y-%m-%d']),
+  ])
+  const today = clock.stdout.trim()
+  const days = Array.from({ length: ROLLING_DAYS }, (_, i) => shiftDay(today, i - (ROLLING_DAYS - 1)))
+  await update($, history, () => days.map(day => ({ day, usd: costs?.days[day] ?? 0, tokens: tokens?.days[day] ?? 0 })))
+  await $.ui.open({ id: HISTORY_PANE, title: `Usage, last ${ROLLING_DAYS} days` })
+}
+
 // Keeps a reading of each window every few minutes, across sessions, and gives each window's
 // recent pace in percent per millisecond: from the oldest reading in the lookback to now
 async function recordPace($: EngineInterface, limits: Limit[], now: number) {
@@ -256,7 +288,7 @@ async function recordPace($: EngineInterface, limits: Limit[], now: number) {
 }
 
 // Toasts once per window and threshold, even across sessions
-async function alertLimits($: EngineInterface, limits: Limit[]) {
+async function alertLimits($: EngineInterface, limits: Limit[], now: number) {
   const alerted = ((await $.store.get('alerted')) as string[] | undefined) ?? []
   const fresh: string[] = []
   for (const l of limits) {
@@ -267,6 +299,19 @@ async function alertLimits($: EngineInterface, limits: Limit[]) {
     fresh.push(id)
     const name = LIMIT_LABELS[l.kind] ?? l.kind
     $.ui.toast(`${crossed >= 95 ? '🔥' : '⚠️'}  ${name} limit at ${Math.round(l.percent)}%`, { timeoutMs: 8000 })
+  }
+  // And once per window when its pace would use it up before the reset
+  for (const l of limits) {
+    if (!l.resetsAt) continue
+    const resetMs = Date.parse(l.resetsAt) - now
+    const out = runsOutIn(l.kind, l.percent, resetMs, l.recentRate)
+    const id = `pace@${l.kind}@${l.resetsAt}`
+    if (out === undefined || alerted.includes(id)) continue
+    fresh.push(id)
+    const name = LIMIT_LABELS[l.kind] ?? l.kind
+    $.ui.toast(`▲  ${name} limit runs out in ~${formatReset(out)} at this pace, ${formatReset(resetMs - out)} before it resets`, {
+      timeoutMs: 10_000,
+    })
   }
   if (fresh.length > 0) await $.store.set('alerted', [...alerted, ...fresh].slice(-50))
 }
@@ -292,21 +337,21 @@ async function refresh($: EngineInterface) {
   isRefreshing = true
   try {
     const cwd = await $.session.cwd()
-    const [usage, model, now, clock, repo, sessionId] = await Promise.all([
+    const [usage, model, now, clock, repo, sessionId, agents] = await Promise.all([
       $.session.usage(),
       $.session.model(),
       $.clock.now(),
       $.process.run(['date', '+%Y-%m-%d|%I:%M %p|%H|%M|%S']),
       readGit($, cwd).catch(() => null),
       $.session.id(),
+      $.agent.list().catch(() => []),
     ])
     const [day = '', time = '', hh, mm, ss] = clock.stdout.trim().split('|')
     const midnight = now - ((Number(hh) * 60 + Number(mm)) * 60 + Number(ss)) * 1000
     const costUsd = usage.cost?.usd ?? null
     const ledger = costUsd !== null ? await recordCost($, sessionId, costUsd, day, usage.startedAt >= midnight) : null
     const tokenLedger = (await $.store.get(TOKEN_KEY)) as TokenLedger | undefined
-    // The ledger's days are local dates, so stepping back on a UTC calendar keeps them aligned
-    const since = new Date(Date.parse(`${day}T00:00:00Z`) - (ROLLING_DAYS - 1) * 86_400_000).toISOString().slice(0, 10)
+    const since = shiftDay(day, -(ROLLING_DAYS - 1))
     const readings = await Promise.all(
       usage.rateLimits.map(async (l): Promise<Limit> => ({
         kind: l.kind,
@@ -342,9 +387,10 @@ async function refresh($: EngineInterface) {
         ? Object.entries(ledger.days).reduce((sum, [d, usd]) => (d >= since && d <= day ? sum + usd : sum), 0)
         : null,
       limits,
+      agents: agents.filter(a => a.status === 'running').length,
     }
     await update($, snap, () => next)
-    await alertLimits($, limits)
+    await alertLimits($, limits, now)
   } finally {
     isRefreshing = false
   }
@@ -366,7 +412,51 @@ export const register: Register = on => {
     const ran = await next(e)
     startTimers($)
     void refresh($)
+    await $.command.register({
+      name: HISTORY_PANE,
+      description: `Show cost and tokens for each of the last ${ROLLING_DAYS} days`,
+    })
     return ran
+  })
+
+  on('command.run', { command: HISTORY_PANE }, async $ => {
+    await openHistory($)
+    return { text: 'Usage history opened.' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: HISTORY_PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const days = await read($, history)
+    const most = Math.max(0.01, ...days.map(d => d.usd))
+    const usd = days.reduce((sum, d) => sum + d.usd, 0)
+    const tokens = days.reduce((sum, d) => sum + d.tokens, 0)
+    // The newest days when the pane is too short for all of them
+    const room = Math.max(1, (e.viewport?.rows ?? 40) - 5)
+
+    return (
+      <Box flexDirection="column">
+        {days.slice(-room).map(d => {
+          const cells = d.usd > 0 ? Math.max(1, Math.round((d.usd / most) * HISTORY_BAR)) : 0
+          return (
+            <Text key={d.day} wrap="truncate">
+              <Text dimColor>{`${dayLabel(d.day)}  `}</Text>
+              <Text color={COLORS.ok}>{'█'.repeat(cells)}</Text>
+              <Text dimColor>{'·'.repeat(HISTORY_BAR - cells)}</Text>
+              <Text color={d.usd > 0 ? COLORS.ok : undefined} dimColor={d.usd === 0}>{`  ${formatUsd(d.usd).padStart(7)}`}</Text>
+              <Text color={COLORS.model}>{`  ${(d.tokens > 0 ? formatTokens(d.tokens) : '–').padStart(6)}`}</Text>
+            </Text>
+          )
+        })}
+        <Text> </Text>
+        <Text wrap="truncate">
+          <Text dimColor>{`${ROLLING_DAYS} days  `}</Text>
+          <Text color={COLORS.ok} bold>{formatUsd(usd)}</Text>
+          <Text dimColor>{' · '}</Text>
+          <Text color={COLORS.model}>{formatTokens(tokens)}</Text>
+          <Text dimColor>{' tokens, counted from when the mod was installed'}</Text>
+        </Text>
+      </Box>
+    )
   })
 
   on('prompt.submit', async ($, e, next) => {
@@ -391,7 +481,7 @@ export const register: Register = on => {
     const used = ran.usage
     if (used) {
       const input = used.input_tokens + used.cache_read_input_tokens + used.cache_creation_input_tokens
-      await update($, lastTurn, () => ({ input, output: used.output_tokens }))
+      await update($, lastTurn, () => ({ input, output: used.output_tokens, cached: used.cache_read_input_tokens }))
       const [sessionId, clock] = await Promise.all([$.session.id(), $.process.run(['date', '+%Y-%m-%d'])])
       await recordTokens($, sessionId, clock.stdout.trim(), input + used.output_tokens)
     }
@@ -485,26 +575,36 @@ export const register: Register = on => {
       )
       costShort.push(...cost, { text: ' ' })
       if (hours > 0.05) cost.push({ text: ` ${formatUsd(s.costUsd / hours)}/h`, dim: true })
-      const addTotal = (usd: number, n: number, label: string) =>
-        cost.push(
-          { text: ' · ', dim: true },
-          { text: formatUsd(usd), color: COLORS.ok },
-          ...tokens(n),
-          { text: ` ${label}`, dim: true },
-        )
+      const addTotal = (usd: number, n: number) =>
+        cost.push({ text: ' · ', dim: true }, { text: formatUsd(usd), color: COLORS.ok }, ...tokens(n), { text: ' ' })
       // Today only when it adds to the session; the 30 days always, even while it matches today
-      if (s.todayUsd !== null && s.todayUsd - s.costUsd >= 0.01) addTotal(s.todayUsd, counted.today, 'today')
-      if (s.rollingUsd !== null) addTotal(s.rollingUsd, counted.rolling, `${ROLLING_DAYS}d`)
-      cost.push({ text: ' ' })
+      if (s.todayUsd !== null && s.todayUsd - s.costUsd >= 0.01) {
+        addTotal(s.todayUsd, counted.today)
+        cost.push({ text: 'today', dim: true })
+      }
+      // The 30 days' label is a button that opens the history pane, so it is drawn apart
+      if (s.rollingUsd !== null) addTotal(s.rollingUsd, counted.rolling)
     }
+    const historyLabel = `${ROLLING_DAYS}d`
+    const hasHistory = s.costUsd !== null && s.rollingUsd !== null
+    const costWidth = width(cost) + (hasHistory ? historyLabel.length : 0) + 1
     // When the whole line does not fit beside the title, the session cost alone still shows
-    const fits = (segs: Seg[]) => width(title) + width(segs) + 3 <= total
-    const right = fits(cost) ? cost : fits(costShort) ? costShort : []
-    const top = [...title, line('─'.repeat(Math.max(1, total - width(title) - width(right) - 2))), ...right, line('─╮')]
+    const fits = (n: number) => width(title) + n + 3 <= total
+    const showFull = cost.length > 0 && fits(costWidth)
+    const right = showFull ? cost : fits(width(costShort)) ? costShort : []
+    const rightWidth = showFull ? costWidth : width(right)
+    const topLeft = [...title, line('─'.repeat(Math.max(1, total - width(title) - rightWidth - 2))), ...right]
+    const topRight = [...(showFull ? [{ text: ' ' }] : []), line('─╮')]
 
     // Bottom edge: the git groups on the left; the last turn's tokens, how long the session has run and the time on the right
+    // Subagents running right now come first, ahead of git
+    const running = (s.agents as number | undefined) ?? 0
+    const groups: Seg[][] = [
+      ...(running > 0 ? [[{ text: `↻ ${running} ${running === 1 ? 'agent' : 'agents'}`, color: COLORS.model }]] : []),
+      ...gitGroups,
+    ]
     const changes: Seg[] =
-      gitGroups.length === 0 ? [] : [{ text: ' ' }, ...gitGroups.flatMap((group, i) => (i === 0 ? group : [sep, ...group])), { text: ' ' }]
+      groups.length === 0 ? [] : [{ text: ' ' }, ...groups.flatMap((group, i) => (i === 0 ? group : [sep, ...group])), { text: ' ' }]
     const clock: Seg[] = [
       { text: ' ' },
       // The last turn's tokens, its responses summed: read in (cache included) and written out
@@ -512,6 +612,9 @@ export const register: Register = on => {
         ? [
             { text: 'in ', dim: true },
             { text: formatTokens(turn.input), color: COLORS.model },
+            ...(turn.input > 0 && turn.cached !== undefined
+              ? [{ text: ` (${Math.floor((turn.cached / turn.input) * 100)}% cache)`, dim: true }]
+              : []),
             { text: ' · out ', dim: true },
             { text: formatTokens(turn.output), color: COLORS.model },
             { text: ' · ', dim: true },
@@ -559,20 +662,40 @@ export const register: Register = on => {
       { text: ` ${label}`, dim: true },
       ...extra,
     ]
-    const stats: Seg[][] = [
-      ...s.limits.map(l => {
+    // A limit's card, shown while the pointer is over it: the pace across the window and lately
+    const paceCard = (l: Limit, resetMs: number, out: number | undefined): Seg[] | undefined => {
+      const windowMs = WINDOW_MS[l.kind]
+      const elapsed = windowMs === undefined ? 0 : windowMs - resetMs
+      if (elapsed <= 0) return undefined
+      return [
+        { text: ' pace ', dim: true },
+        { text: perHour(l.percent / elapsed) },
+        { text: ' this window', dim: true },
+        { text: ' · ', dim: true },
+        ...(l.recentRate !== undefined
+          ? [{ text: perHour(l.recentRate) }, { text: ' last 3h', dim: true }]
+          : [{ text: 'last 3h not read yet', dim: true }]),
+        ...(out !== undefined
+          ? [{ text: ` → out ~${formatReset(out)}, ${formatReset(resetMs - out)} before reset `, color: COLORS.hot }]
+          : [{ text: ' → lasts until reset ', color: COLORS.ok }]),
+      ]
+    }
+    type Block = { key: string; segs: Seg[]; card?: Seg[] }
+    const stats: Block[] = [
+      ...s.limits.map((l): Block => {
         const resetMs = l.resetsAt ? Date.parse(l.resetsAt) - s.now : 0
         const name = LIMIT_LABELS[l.kind] ?? l.kind
-        if (resetMs <= 0) return stat(l.percent, name)
+        if (resetMs <= 0) return { key: l.kind, segs: stat(l.percent, name) }
         const out = runsOutIn(l.kind, l.percent, resetMs, l.recentRate)
-        return stat(l.percent, `${name} · reset ${formatReset(resetMs)}`, [
+        const segs = stat(l.percent, `${name} · reset ${formatReset(resetMs)}`, [
           ...(l.resetsOn ? [{ text: ` (${l.resetsOn})`, dim: true }] : []),
           ...(out !== undefined ? [{ text: ` ▲ out ~${formatReset(out)}`, color: COLORS.hot, bold: true }] : []),
         ])
+        return { key: l.kind, segs, card: paceCard(l, resetMs, out) }
       }),
       ...(s.context
         ? [
-            [
+            { key: 'ctx', segs: [
               { text: 'ctx ', dim: true },
               { text: '━'.repeat(barCells(s.context.percent)), color: toneHex(s.context.percent) },
               { text: '━'.repeat(BAR_CELLS - barCells(s.context.percent)), dim: true },
@@ -582,7 +705,7 @@ export const register: Register = on => {
                 color: s.context.percent >= 50 ? toneHex(s.context.percent) : undefined,
               },
               { text: ` ${formatTokens(s.context.tokens)}/${formatTokens(s.context.window)}`, dim: true },
-            ],
+            ] },
           ]
         : []),
     ]
@@ -590,8 +713,7 @@ export const register: Register = on => {
     // Drop the last blocks first when the terminal is too narrow for one row
     const divider: Seg = { text: '   │   ', color: border }
     const room = total - 8
-    while (stats.length > 1 && stats.reduce((n, st) => n + width(st) + width([divider]), 0) > room) stats.pop()
-    const row = stats.flatMap((st, i) => (i === 0 ? st : [divider, ...st]))
+    while (stats.length > 1 && stats.reduce((n, st) => n + width(st.segs) + width([divider]), 0) > room) stats.pop()
 
     const ctxFull = s.context !== null && s.context.percent >= COMPACT_AT
     // A side of the frame, one "│" per row of the stats and their padding
@@ -608,11 +730,36 @@ export const register: Register = on => {
         {clawd}
         {/* The card's own edge columns are painted over below its first row, so the frame sits one in */}
         <Box flexDirection="column" backgroundColor={COLORS.card} paddingX={CARD_INSET}>
-          <Text wrap="truncate">{draw(top)}</Text>
+          <Box>
+            <Text wrap="truncate">{draw(topLeft)}</Text>
+            {showFull && hasHistory && (
+              <Button key="history" plain dimColor label={historyLabel} onPress={() => void openHistory($)} />
+            )}
+            <Text wrap="truncate">{draw(topRight)}</Text>
+          </Box>
           <Box width={total}>
             {edge('l')}
             <Box flexGrow={1} paddingX={2} paddingY={PAD_ROWS} justifyContent="space-between">
-              <Text wrap="truncate">{draw(row)}</Text>
+              <Box>
+                {stats.flatMap((st, i) => [
+                  ...(i === 0 ? [] : [<Text key={`div-${st.key}`} wrap="truncate">{draw([divider])}</Text>]),
+                  <Box key={`stat-${st.key}`}>
+                    <Text wrap="truncate">{draw(st.segs)}</Text>
+                    {st.card && (
+                      <Box
+                        position="absolute"
+                        top={1}
+                        left={0}
+                        display="none"
+                        hover={{ display: 'flex' }}
+                        backgroundColor={COLORS.card}
+                      >
+                        <Text wrap="truncate">{draw(st.card)}</Text>
+                      </Box>
+                    )}
+                  </Box>,
+                ])}
+              </Box>
               {ctxFull && !e.props.isWorking && (
                 <Button
                   key="compact"

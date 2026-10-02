@@ -17,7 +17,10 @@ export type TokenLedger = {
 }
 
 // The last turn's tokens: read in, cache included, and written out
-export type TurnTokens = { input: number; output: number }
+export type TurnTokens = { input: number; output: number; cached?: number }
+
+// One day in the history pane
+export type HistoryDay = { day: string; usd: number; tokens: number }
 
 export type Snapshot = {
   folder: string
@@ -51,6 +54,8 @@ export type Snapshot = {
   // Spend over the last 30 days, today included
   rollingUsd: number | null
   limits: Limit[]
+  // Subagents running right now
+  agents: number
 }
 
 // Kept in $.store across sessions: spend per day, and each session's last reading
@@ -61,6 +66,6 @@ export type CostLedger = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'statusline-band': { snap: Snapshot | null; isCompacting: boolean; frame: number; isBlinking: boolean; lastTurn: TurnTokens | null }
+    'statusline-band': { snap: Snapshot | null; isCompacting: boolean; frame: number; isBlinking: boolean; lastTurn: TurnTokens | null; history: HistoryDay[] }
   }
 }
