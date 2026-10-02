@@ -40,7 +40,7 @@ const LOGO_CELLS = logoCells(STANDING)
 const DANCE_CELLS = DANCE_FRAMES.map(logoCells)
 const BLINK_CELLS = logoCells(BLINK_FRAME)
 
-export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open' | 'search'
+export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open' | 'search' | 'compact'
 
 // A button under the card: most send a prompt as if typed; one with no prompt runs itself (quick commit)
 export type Action = { key: string; label: string; hotkey: string; prompt?: string }
@@ -63,6 +63,8 @@ export type BandView = {
   isBlinking: boolean
   // What Spotify plays, null when it plays nothing (or the setting is off)
   music: Music | null
+  // The Spotify card shrunk to one line
+  isMusicCompact: boolean
   canDrawArt: boolean
   // The Spotify logo, a PNG the plugin ships; absent where pictures cannot be drawn
   logoFile?: string
@@ -406,7 +408,35 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
     const lastSegs: Seg[] = last
       ? [{ text: ' ' }, { text: `last: ${last.name} — ${last.artist} · ${s.now - last.at < 60_000 ? 'just now' : `${formatReset(s.now - last.at)} ago`}`, dim: true }, { text: ' ' }]
       : []
-    const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, cardWidth - width(lastSegs) - 4))), line('─╯')]
+    // ...and on its right, the button that shrinks the card to one line
+    const MINIMIZE = ' minimize '
+    const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, cardWidth - width(lastSegs) - 3 - MINIMIZE.length)))]
+
+    // Shrunk: one line, no frame and no Beatbot, from the play controls to the track and the time,
+    // with the button that brings the card back
+    if (view.isMusicCompact) {
+      return (
+        <Box marginLeft={INDENT} width={total - 4} justifyContent="space-between">
+          <Box flexShrink={1}>
+            <Text color={SPOTIFY_GREEN} bold>{'♪ '}</Text>
+            <Button key="music-previous" plain label="◀◀" onPress={() => view.onMusic('previous')} />
+            <Text>{' '}</Text>
+            <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶ '} onPress={() => view.onMusic('playpause')} />
+            <Text>{' '}</Text>
+            <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next')} />
+            <Text wrap="truncate">
+              <Text bold>{`  ${m.name}`}</Text>
+              <Text>{m.artist ? ` — ${m.artist}` : ''}</Text>
+              <Text dimColor>{`  ${time}`}</Text>
+            </Text>
+          </Box>
+          <Box flexShrink={0}>
+            <Text>{'  '}</Text>
+            <Button key="music-compact" plain dimColor label="expand" onPress={() => view.onMusic('compact')} />
+          </Box>
+        </Box>
+      )
+    }
 
     // Inside: the controls, progress and the time, then shuffle, repeat and volume on the right. As the
     // card narrows, the toggles go first, then the progress bar, so nothing wraps or runs together
@@ -469,7 +499,11 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
             </Box>
             <Text wrap="truncate">{draw([line('│')])}</Text>
           </Box>
-          <Text wrap="truncate">{draw(bottomLine)}</Text>
+          <Box>
+            <Text wrap="truncate">{draw(bottomLine)}</Text>
+            <Button key="music-compact" plain dimColor label={MINIMIZE.trim()} onPress={() => view.onMusic('compact')} />
+            <Text>{draw([line(' ─╯')])}</Text>
+          </Box>
         </Box>
       </Box>
     )

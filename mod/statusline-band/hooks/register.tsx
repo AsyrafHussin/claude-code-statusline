@@ -49,6 +49,7 @@ const mood = atom({ plugin: 'statusline-band', key: 'mood' } as const, 'idle')
 const moodTick = atom({ plugin: 'statusline-band', key: 'moodTick' } as const, 0)
 const music = atom({ plugin: 'statusline-band', key: 'music' } as const, null)
 const danceTick = atom({ plugin: 'statusline-band', key: 'danceTick' } as const, 0)
+const musicCompact = atom({ plugin: 'statusline-band', key: 'musicCompact' } as const, false)
 const search = atom({ plugin: 'statusline-band', key: 'search' } as const, { query: '', status: 'idle', message: '', tracks: [] })
 
 // The pane with each day's cost and tokens, opened by /usage-history or the window's label on the band;
@@ -480,6 +481,7 @@ function startTimers($: EngineInterface) {
   if (runtime.config.spotify) {
     void readSpotify($)
     $.clock.every(SPOTIFY_EVERY_MS, () => void readSpotify($))
+    void $.store.get(COMPACT_KEY).then(kept => update($, musicCompact, () => kept === true))
     // Beatbot's dance: a step each tick, only while a track plays
     $.clock.every(DANCE_EVERY_MS, () => void stepDance($))
   }
@@ -493,6 +495,7 @@ function startTimers($: EngineInterface) {
 
 const SPOTIFY_EVERY_MS = 5_000
 const DANCE_EVERY_MS = 250
+const COMPACT_KEY = 'spotify-compact-v1'
 // Asks only while Spotify runs ("is running" never launches it); fields joined by the unit separator
 const SPOTIFY_SCRIPT = `if application "Spotify" is running then
   tell application "Spotify"
@@ -531,7 +534,7 @@ async function stepDance($: EngineInterface) {
 }
 
 // The controls under the band, each one AppleScript line to Spotify; then the state is read again at once
-const SPOTIFY_COMMANDS: Record<Exclude<MusicCommand, 'search'>, string> = {
+const SPOTIFY_COMMANDS: Record<Exclude<MusicCommand, 'search' | 'compact'>, string> = {
   playpause: 'playpause',
   next: 'next track',
   previous: 'previous track',
@@ -545,6 +548,13 @@ const SPOTIFY_COMMANDS: Record<Exclude<MusicCommand, 'search'>, string> = {
 async function controlSpotify($: EngineInterface, command: MusicCommand) {
   if (command === 'search') {
     await openSearch($)
+    return
+  }
+  // Shrinks the card to one line or brings it back, kept across sessions
+  if (command === 'compact') {
+    const isCompact = !(await read($, musicCompact))
+    await update($, musicCompact, () => isCompact)
+    await $.store.set(COMPACT_KEY, isCompact)
     return
   }
   const line = SPOTIFY_COMMANDS[command]
@@ -969,6 +979,7 @@ export const register: Register = (on, options) => {
       tick: isWorking ? await read($, frame) : null,
       isBlinking: await read($, isBlinking),
       music: runtime.config.spotify ? await read($, music) : null,
+      isMusicCompact: await read($, musicCompact),
       canDrawArt: e.surface === 'terminal',
       logoFile: e.surface === 'terminal' ? `${$.plugin.root}/assets/spotify.png` : undefined,
       actions: ACTIONS,

@@ -104,6 +104,6 @@ export type CostLedger = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'statusline-band': { snap: Snapshot | null; isCompacting: boolean; frame: number; isBlinking: boolean; lastTurn: TurnTokens | null; history: HistoryDay[]; mood: Mood; moodTick: number; music: Music | null; danceTick: number; search: SpotifySearch }
+    'statusline-band': { snap: Snapshot | null; isCompacting: boolean; frame: number; isBlinking: boolean; lastTurn: TurnTokens | null; history: HistoryDay[]; mood: Mood; moodTick: number; music: Music | null; danceTick: number; search: SpotifySearch; musicCompact: boolean }
   }
 }
