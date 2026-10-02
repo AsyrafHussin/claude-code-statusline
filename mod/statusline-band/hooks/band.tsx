@@ -347,67 +347,87 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
       ))}
     </Box>
   )
-  // Spotify, compact: three rows beside a small album art, as wide as the actions above, each with a left
-  // and a right end so it fills the band the way the rows above do. The state and the track, and the track
-  // heard before it; progress across the width, and the time; the controls, and shuffle, repeat and volume
+  // Spotify, in a card of its own drawn like the main one and as wide, with the album art under Clawd.
+  // Its top edge holds the state and the track; inside, the controls, progress with the time, and
+  // shuffle, repeat and volume; its bottom edge, the track heard before this one
   const drawMusic = (m: Music) => {
-    const time = `${formatClock(m.positionMs)} / ${formatClock(m.durationMs)}`
     const hasArt = view.canDrawArt && Raster !== undefined && m.art !== null
-    const width = total - 4
-    const cells = Math.max(10, width - time.length - 2)
-    const filled = m.durationMs > 0 ? Math.min(cells, Math.round((m.positionMs / m.durationMs) * cells)) : 0
+    const time = `${formatClock(m.positionMs)} / ${formatClock(m.durationMs)}`
     const last = m.recent[0]
+
+    // Top edge, the track cut to fit
+    const head: Seg[] = [
+      line('╭─ '),
+      { text: 'Spotify', color: SPOTIFY_GREEN, bold: true },
+      { text: m.isPlaying ? ' · playing' : ' · paused', dim: true },
+      line(' ─ '),
+    ]
+    const track = [m.name, m.artist ? ` — ${m.artist}` : '', m.album ? ` · ${m.album}` : '']
+    const roomForTrack = Math.max(0, total - width(head) - 4)
+    const trackSegs: Seg[] = []
+    let used = 0
+    track.forEach((part, i) => {
+      const chars = [...part]
+      const take = Math.min(chars.length, Math.max(0, roomForTrack - used))
+      if (take <= 0) return
+      const text = take < chars.length ? `${chars.slice(0, Math.max(0, take - 1)).join('')}…` : part
+      used += [...text].length
+      trackSegs.push(i === 0 ? { text, bold: true } : i === 1 ? { text } : { text, dim: true })
+    })
+    const topMusic = [...head, ...trackSegs, { text: ' ' }]
+    const topLine = [...topMusic, line('─'.repeat(Math.max(1, total - width(topMusic) - 2))), line('─╮')]
+
+    // Bottom edge: the track heard before this one
+    const lastSegs: Seg[] = last
+      ? [{ text: ' ' }, { text: `last: ${last.name} — ${last.artist} · ${s.now - last.at < 60_000 ? 'just now' : `${formatReset(s.now - last.at)} ago`}`, dim: true }, { text: ' ' }]
+      : []
+    const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, total - width(lastSegs) - 4))), line('─╯')]
+
+    // Inside: the controls, progress and the time, then shuffle, repeat and volume on the right
+    const toggles = `shuffle · repeat · vol − ${m.volume}% +`
+    const cells = Math.max(10, total - 2 - 4 - 14 - (time.length + 2) - toggles.length - 4)
+    const filled = m.durationMs > 0 ? Math.min(cells, Math.round((m.positionMs / m.durationMs) * cells)) : 0
     const toggle = (key: MusicCommand, label: string, isOn: boolean) => (
       <Button key={`music-${key}`} plain dimColor={!isOn} label={label} onPress={() => view.onMusic(key)} />
     )
+
     return (
       <Box>
-        {/* The album art sits under Clawd, in the same columns, so the text lines up with the actions */}
-        <Box width={INDENT} flexShrink={0} paddingLeft={CLAWD_BODY_FROM}>
+        {/* The album art sits under Clawd, as wide as his head and shirt */}
+        <Box width={CLAWD_WIDTH} flexShrink={0} paddingLeft={CLAWD_BODY_FROM} alignItems="center">
           {hasArt && m.art ? <Raster key="album-art" columns={ART_COLUMNS} rows={ART_ROWS} cells={m.art} /> : null}
         </Box>
-        <Box flexDirection="column" width={width}>
-          <Box justifyContent="space-between">
-            <Box flexShrink={1}>
-              <Text wrap="truncate">
-                <Text color={SPOTIFY_GREEN} bold>{'Spotify'}</Text>
-                <Text dimColor>{m.isPlaying ? ' · playing   ' : ' · paused    '}</Text>
-                <Text bold>{m.name}</Text>
-                <Text>{m.artist ? ` — ${m.artist}` : ''}</Text>
-                <Text dimColor>{m.album ? ` · ${m.album}` : ''}</Text>
-              </Text>
-            </Box>
-            {last ? (
-              <Box flexShrink={0} marginLeft={3}>
-                <Text dimColor wrap="truncate">
-                  {`last: ${last.name} — ${last.artist} · ${s.now - last.at < 60_000 ? 'just now' : `${formatReset(s.now - last.at)} ago`}`}
+        <Box flexDirection="column" backgroundColor={card} paddingX={CARD_INSET}>
+          <Text wrap="truncate">{draw(topLine)}</Text>
+          <Box width={total}>
+            <Text wrap="truncate">{draw([line('│')])}</Text>
+            <Box flexGrow={1} paddingX={2} justifyContent="space-between">
+              <Box>
+                <Button key="music-previous" plain label="◀◀" onPress={() => view.onMusic('previous')} />
+                <Text>{'  '}</Text>
+                <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶ '} onPress={() => view.onMusic('playpause')} />
+                <Text>{'  '}</Text>
+                <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next')} />
+                <Text>{'    '}</Text>
+                <Text wrap="truncate">
+                  <Text color={SPOTIFY_GREEN}>{'━'.repeat(filled)}</Text>
+                  <Text dimColor>{'━'.repeat(cells - filled)}</Text>
+                  <Text dimColor>{`  ${time}`}</Text>
                 </Text>
               </Box>
-            ) : null}
-          </Box>
-          <Text wrap="truncate">
-            <Text color={SPOTIFY_GREEN}>{'━'.repeat(filled)}</Text>
-            <Text dimColor>{'━'.repeat(cells - filled)}</Text>
-            <Text dimColor>{`  ${time}`}</Text>
-          </Text>
-          <Box justifyContent="space-between">
-            <Box>
-              <Button key="music-previous" plain label="◀◀" onPress={() => view.onMusic('previous')} />
-              <Text>{'   '}</Text>
-              <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶ '} onPress={() => view.onMusic('playpause')} />
-              <Text>{'   '}</Text>
-              <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next')} />
+              <Box>
+                {toggle('shuffle', 'shuffle', m.isShuffling)}
+                <Text dimColor>{' · '}</Text>
+                {toggle('repeat', 'repeat', m.isRepeating)}
+                <Text dimColor>{' · vol '}</Text>
+                <Button key="music-quieter" plain dimColor label="−" onPress={() => view.onMusic('quieter')} />
+                <Text>{` ${m.volume}% `}</Text>
+                <Button key="music-louder" plain dimColor label="+" onPress={() => view.onMusic('louder')} />
+              </Box>
             </Box>
-            <Box>
-              {toggle('shuffle', 'shuffle', m.isShuffling)}
-              <Text dimColor>{' · '}</Text>
-              {toggle('repeat', 'repeat', m.isRepeating)}
-              <Text dimColor>{' · vol '}</Text>
-              <Button key="music-quieter" plain dimColor label="−" onPress={() => view.onMusic('quieter')} />
-              <Text>{` ${m.volume}% `}</Text>
-              <Button key="music-louder" plain dimColor label="+" onPress={() => view.onMusic('louder')} />
-            </Box>
+            <Text wrap="truncate">{draw([line('│')])}</Text>
           </Box>
+          <Text wrap="truncate">{draw(bottomLine)}</Text>
         </Box>
       </Box>
     )
