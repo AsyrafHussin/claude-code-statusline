@@ -56,7 +56,7 @@
     "spotify": {
       "type": "boolean",
       "title": "Spotify",
-      "description": "While Spotify runs, show what it plays, with album art and controls, under the band (macOS)",
+      "description": "While Spotify runs, show what it plays under the band, with Beatbot dancing and the controls (macOS)",
       "default": true
     },
     "plan": {

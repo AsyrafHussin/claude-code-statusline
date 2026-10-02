@@ -18,7 +18,7 @@ import {
   shirtText,
 } from './logic'
 import type { GitStep } from './logic'
-import { BLINK_FRAME, DANCE_FRAMES, LOGO, LOGO_COLUMNS, LOGO_ROWS, PALETTE } from './spotify-logo'
+import { BLINK_FRAME, DANCE_FRAMES, LOGO_COLUMNS, LOGO_ROWS, PALETTE, STANDING } from './spotify-logo'
 import { COLORS, LIMIT_LABELS } from './state'
 import type { Config, GitAuto } from './state'
 import type { Limit, Mood, Music, Snapshot, TurnTokens } from '../types'
@@ -26,9 +26,6 @@ import type { Limit, Mood, Music, Snapshot, TurnTokens } from '../types'
 // The elements the band draws with, as $.ui.resolve gives them; Raster only on the terminal
 export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & Partial<Pick<Elements['terminal'], 'Raster' | 'Image'>>
 
-// The album art's box, in cells: each cell shows two pixels, so the picture is 6 by 6, three rows tall
-export const ART_COLUMNS = 6
-export const ART_ROWS = 3
 const SPOTIFY_GREEN = '#1db954'
 // Encode each pose once; rendering only selects a frame from the shared animation beat.
 const logoCells = (grid: string[]) =>
@@ -39,7 +36,7 @@ const logoCells = (grid: string[]) =>
         LOGO_ROWS,
       )
     : null
-const LOGO_CELLS = logoCells(LOGO)
+const LOGO_CELLS = logoCells(STANDING)
 const DANCE_CELLS = DANCE_FRAMES.map(logoCells)
 const BLINK_CELLS = logoCells(BLINK_FRAME)
 
@@ -59,6 +56,8 @@ export type BandView = {
   turn: TurnTokens | null
   feeling: Mood
   beat: number
+  // Beatbot's dance step, counting while a track plays
+  danceTick: number
   // The running animation's frame while Claude works, else null
   tick: number | null
   isBlinking: boolean
@@ -364,18 +363,18 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
       ))}
     </Box>
   )
-  // Spotify, in a card of its own framed in Spotify green, drawn like the main one and as wide, with the album art under Clawd.
+  // Spotify, in a card of its own framed in Spotify green, drawn like the main one and as wide, with Beatbot
+  // dancing under Clawd.
   // Its top edge holds the state and the track; inside, the controls, progress with the time, and
   // shuffle, repeat and volume; its bottom edge, the track heard before this one
   const drawMusic = (m: Music) => {
-    const mascotCells = view.isBlinking
-      ? BLINK_CELLS
-      : m.isPlaying
-        ? DANCE_CELLS[view.beat % DANCE_CELLS.length] ?? LOGO_CELLS
+    // Beatbot dances through his frames while a track plays, and stands (blinking now and then) while not
+    const mascotCells = m.isPlaying
+      ? DANCE_CELLS[view.danceTick % DANCE_CELLS.length] ?? LOGO_CELLS
+      : view.isBlinking
+        ? BLINK_CELLS
         : LOGO_CELLS
-    const hasArt = view.canDrawArt && Raster !== undefined && m.art !== null
-    // The card makes room on its right for the album art
-    const cardWidth = hasArt ? total - ART_COLUMNS - 2 : total
+    const cardWidth = total
     const time = `${formatClock(m.positionMs)} / ${formatClock(m.durationMs)}`
     const last = m.recent[0]
     // Spotify's card is framed in Spotify green
@@ -460,12 +459,6 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
           </Box>
           <Text wrap="truncate">{draw(bottomLine)}</Text>
         </Box>
-        {/* The album art, small, on the card's right */}
-        {hasArt && m.art ? (
-          <Box marginLeft={1} flexShrink={0}>
-            <Raster key="album-art" columns={ART_COLUMNS} rows={ART_ROWS} cells={m.art} />
-          </Box>
-        ) : null}
       </Box>
     )
   }
@@ -544,7 +537,7 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
           </Box>
         )}
       </Box>
-      {/* Under the actions, while Spotify plays: its own row, from the album art to the Spotify mark */}
+      {/* Under the actions, while Spotify plays: Beatbot and the Spotify card */}
       {view.music && <Box marginTop={1}>{drawMusic(view.music)}</Box>}
     </Box>
   )

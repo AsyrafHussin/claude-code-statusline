@@ -8,7 +8,7 @@ A panel above the Claude Code prompt, with Clawd, the Claude Code mascot, standi
 - **Clawd:** runs while Claude works. Otherwise it sweats while a rate limit is at 95% or more, falls asleep after 10 quiet minutes, and cheers when your commits are pushed.
 - **Actions:** a row under the card sends a prompt as if you typed it: `push` (commit and push), `find bugs`, `run tests` and `summarize`. `quick commit` has Haiku write a message from the diff and shows it: commit, commit and push, or type your own; it then commits itself, without a turn of the main model. Click one, or focus the band with ctrl+x tab and press 1 to 5.
 - **Git switches:** `commit auto · push ask`, kept per repo. On `ask`, Claude's `git add` or `commit`, or `push`, waits for your OK. On `auto` Claude also does it on its own: it commits each finished change, and pushes right after. It runs without a prompt, but only in its plain form, naming its repo with `-C`: `git -C '/abs/path' add <files>`, `git -C '/abs/path' commit -m '…'` and `git -C '/abs/path' push [remote] [branch]`, joined by `&&`. Any other shape asks whatever the switch says: a step without `-C` (the Bash tool keeps its own folder between calls), a force push, a heredoc, `$(…)`, a `cd`, a pipe, a wrapper such as `env` or `xargs`, or an alias that commits or pushes. Nothing is allowed in plan mode. Steps that only read (`status`, `log`, `diff`, `show`, with flags that only shape their output) may ride along. When a step asks, a line under the dialog says what it takes with it. The system prompt tells Claude the plain form and where each switch stands. Click `commit` or `push` to flip it.
-- **Spotify (macOS):** while Spotify runs, three compact rows under the band show a small album art (6×6 pixels), the track, artist and album, progress with the time, ◀◀ ❚❚ ▶▶, shuffle, repeat and volume − +, and the track heard before it (kept across sessions). It asks Spotify through AppleScript every 5 seconds and never launches it. The playing playlist is not shown: Spotify gives it only through its Web API, which needs a sign-in.
+- **Spotify (macOS):** while Spotify runs, a card framed in Spotify green under the band shows the state and the track, ◀◀ ❚❚ ▶▶, progress with the time, shuffle, repeat and volume − +, and the track heard before it (kept across sessions). Beatbot, a little Spotify mascot drawn in pixels, dances under Clawd while a track plays. It asks Spotify through AppleScript every 5 seconds and never launches it. The playing playlist is not shown: Spotify gives it only through its Web API, which needs a sign-in.
 - **Extras:** hover a rate limit for its pace. Click `30d`, or run `/usage-history`, for a pane with each day's cost and tokens. Toasts fire when a limit passes 80% and 95%, and when its pace would run it out before the reset.
 
 Needs Claude Code v2.1.287 or later.
@@ -32,7 +32,7 @@ Each is a row in `/config`, or run `/plugin configure statusline-band@claude-cod
 | `historyDays` | `30` | Days the rolling cost and the history pane cover, 7 to 62 |
 | `noAttribution` | `false` | Leave Co-Authored-By, Claude-Session and the Claude Code footer out of commits and pull requests |
 | `gitStrict` | `true` | On: with a git switch on auto, only plain commands naming their repo with `-C` run without a prompt. Off: any git command runs without a prompt while the repo's switch is on auto |
-| `spotify` | `true` | While Spotify runs, show what it plays under the band, with album art, a progress bar and controls (macOS) |
+| `spotify` | `true` | While Spotify runs, show what it plays under the band, with Beatbot dancing, a progress bar and controls (macOS) |
 | `plan` | empty | Your Claude plan as shown, such as `Max 20x`; empty reads it from Claude Code's own `~/.claude.json` (updated when Claude Code starts or signs in) |
 
 ## What it runs, reads, keeps and sends
@@ -52,7 +52,7 @@ It runs two programs, never through a shell. The arguments are fixed except the 
   These run every 30 seconds and after each tool call.
 - **`git`, when a git step of Claude's asks**, to say under the dialog what it takes with it: `status --porcelain` and `diff --shortstat HEAD` for a commit; `rev-parse --abbrev-ref @{upstream}`, `rev-list --count @{upstream}..HEAD` and `diff --shortstat @{upstream}...HEAD` for a push.
 - **`git`, when you press quick commit:** `status --porcelain`, `diff HEAD` and `log -5 --format=%s` to write the message; then, once you approve it, `add -A`, `commit -q -m <message>` and, if you chose it, `push`.
-- **`osascript`, for Spotify:** every 5 seconds, only while Spotify runs, to read the track; and on a press of a control (play, pause, skip, shuffle, repeat, volume). **`curl` and `sips`, for album art:** once per track, `curl` fetches the cover from Spotify's image server to `/tmp/statusline-band-art/`, `sips` shrinks it to a 6×6 BMP, and `base64` reads it back.
+- **`osascript`, for Spotify:** every 5 seconds, only while Spotify runs, to read the track; and on a press of a control (play, pause, skip, shuffle, repeat, volume).
 - **`date`, to read the local date and time** (`+%Y-%m-%d`, and `+%Y-%m-%d|%I:%M %p|%H|%M|%S`). It also formats a rate limit's reset moment in your timezone (`date -r <epoch>`).
 
 ### What it reads
@@ -77,7 +77,6 @@ All of it stays in the plugin's own store on your machine, nothing else:
 - **Prompts to Claude, only when you press an action.** Each is the fixed text listed under Actions, sent to this session as if you typed it. A push still goes through your own permission rules.
 - **The diff to Haiku, only when you press quick commit.** Up to 24k characters of the diff, the names of new files and the last five commit subjects go to Claude's small model through Claude Code's own model call, the same way Claude Code itself talks to the model, to write the message.
 - **A push, only when you choose "Commit and push" in quick commit.** It runs `git push` itself, to the branch's upstream, with the git credentials you already have.
-- **A request for album art, while Spotify plays.** `curl` fetches the cover image of the playing track from the URL Spotify itself reports (i.scdn.co).
 - **Nothing else.** It never fetches from git, makes no other network calls, has no telemetry, and sends nothing to any other service. Commits behind are counted against the remote as of your own last fetch or pull.
 
 ### Hooks
