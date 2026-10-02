@@ -18,7 +18,7 @@ import {
   shirtText,
 } from './logic'
 import type { GitStep } from './logic'
-import { LOGO, LOGO_COLUMNS, LOGO_ROWS, PALETTE } from './spotify-logo'
+import { BLINK_FRAME, DANCE_FRAMES, LOGO, LOGO_COLUMNS, LOGO_ROWS, PALETTE } from './spotify-logo'
 import { COLORS, LIMIT_LABELS } from './state'
 import type { Config, GitAuto } from './state'
 import type { Limit, Mood, Music, Snapshot, TurnTokens } from '../types'
@@ -30,15 +30,18 @@ export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & Partia
 export const ART_COLUMNS = 6
 export const ART_ROWS = 3
 const SPOTIFY_GREEN = '#1db954'
-// The pixel logo as Raster cells, once per load; null while spotify-logo.ts holds no grid
-const LOGO_CELLS =
-  LOGO.length > 0
+// Encode each pose once; rendering only selects a frame from the shared animation beat.
+const logoCells = (grid: string[]) =>
+  grid.length > 0
     ? pixelsToCells(
-        { width: LOGO_COLUMNS, height: LOGO_ROWS * 2, pixels: LOGO.join('').split('').map(c => PALETTE[c] ?? CLEAR) },
+        { width: LOGO_COLUMNS, height: LOGO_ROWS * 2, pixels: grid.join('').split('').map(c => PALETTE[c] ?? CLEAR) },
         LOGO_COLUMNS,
         LOGO_ROWS,
       )
     : null
+const LOGO_CELLS = logoCells(LOGO)
+const DANCE_CELLS = DANCE_FRAMES.map(logoCells)
+const BLINK_CELLS = logoCells(BLINK_FRAME)
 
 export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open'
 
@@ -365,6 +368,11 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
   // Its top edge holds the state and the track; inside, the controls, progress with the time, and
   // shuffle, repeat and volume; its bottom edge, the track heard before this one
   const drawMusic = (m: Music) => {
+    const mascotCells = view.isBlinking
+      ? BLINK_CELLS
+      : m.isPlaying
+        ? DANCE_CELLS[view.beat % DANCE_CELLS.length] ?? LOGO_CELLS
+        : LOGO_CELLS
     const hasArt = view.canDrawArt && Raster !== undefined && m.art !== null
     // The card makes room on its right for the album art
     const cardWidth = hasArt ? total - ART_COLUMNS - 2 : total
@@ -411,11 +419,11 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
 
     return (
       <Box>
-        {/* Under Clawd, the Spotify logo: the pixel grid in spotify-logo.ts, or while that is empty the PNG
+        {/* Under Clawd, Beatbot dances while Spotify plays; an empty grid falls back to the PNG
             as an Image, which kitty and Ghostty draw and other terminals show as its alt, the word Spotify */}
         <Box width={CLAWD_WIDTH} flexShrink={0} paddingLeft={CLAWD_BODY_FROM - 1}>
-          {LOGO_CELLS && view.canDrawArt && Raster ? (
-            <Raster key="spotify-logo" columns={LOGO_COLUMNS} rows={LOGO_ROWS} cells={LOGO_CELLS} />
+          {mascotCells && view.canDrawArt && Raster ? (
+            <Raster key="spotify-logo" columns={LOGO_COLUMNS} rows={LOGO_ROWS} cells={mascotCells} />
           ) : view.logoFile && Image ? (
             <Image key="spotify-logo" source={{ file: view.logoFile, format: 'png' }} columns={LOGO_COLUMNS} rows={LOGO_ROWS} alt="Spotify" />
           ) : null}

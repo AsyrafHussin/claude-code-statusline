@@ -436,7 +436,7 @@ const SWEAT_AT = 95
 const BLINK_EVERY_MS = 4_500
 const BLINK_FOR_MS = 300
 
-// Picks Clawd's mood and, for its first minute, steps its animation
+// Picks Clawd's mood and steps the shared beat while a mood animates or Spotify plays.
 async function tickMood($: EngineInterface) {
   const now = await $.clock.now()
   runtime.lastActiveAt ??= now
@@ -454,7 +454,10 @@ async function tickMood($: EngineInterface) {
     runtime.moodSince = now
     await update($, mood, () => next)
   }
-  if (next !== 'idle' && now - runtime.moodSince < MOOD_ANIMATE_MS) await update($, moodTick, n => n + 1)
+  const spotifyPlaying = runtime.config.spotify && (await read($, music))?.isPlaying
+  if (spotifyPlaying || (next !== 'idle' && now - runtime.moodSince < MOOD_ANIMATE_MS)) {
+    await update($, moodTick, n => n + 1)
+  }
 }
 
 async function markActive($: EngineInterface) {
