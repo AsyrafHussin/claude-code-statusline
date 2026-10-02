@@ -263,7 +263,7 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
   const fill = Math.max(1, total - width(changes) - width(clock) - 2 - 'minimize ─╯'.length)
   const bottom = [line('╰─'), ...changes, line('─'.repeat(fill)), ...clock]
 
-  // Shrunk: one line in place of the card and Clawd: the repo and branch, the model, each limit and the
+  // Shrunk: one line from the band's left edge, in place of the card and Clawd: the repo and branch, the model, each limit and the
   // context as a percent, the first git fact, and the session cost, with the button that brings it back
   const compactSegs: Seg[] = [
     { text: `◆ ${s.folder}`, color: COLORS.folder, bold: true },
@@ -440,11 +440,11 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
     const MINIMIZE = ' minimize '
     const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, cardWidth - width(lastSegs) - 2 - MINIMIZE.length - 2))), { text: ' ' }]
 
-    // Shrunk: one line, no frame and no Beatbot, from the play controls to the track and the time,
+    // Shrunk: one line from the band's left edge, no frame and no Beatbot, from the play controls to the track and the time,
     // with the button that brings the card back
     if (view.isMusicCompact) {
       return (
-        <Box marginLeft={INDENT} width={total - 4} justifyContent="space-between">
+        <Box width={INDENT + total - 4} justifyContent="space-between">
           <Box flexShrink={1}>
             <Text color={SPOTIFY_GREEN} bold>{'♪ '}</Text>
             <Button key="music-previous" plain label="◀◀" onPress={() => view.onMusic('previous')} />
@@ -543,7 +543,7 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
     // The whole band on the card color (none when cardColor is empty); its own edge columns are padding
     <Box paddingX={1} paddingY={1} flexDirection="column" backgroundColor={card}>
       {view.isCardCompact ? (
-        <Box marginLeft={INDENT} width={total - 4} justifyContent="space-between">
+        <Box width={INDENT + total - 4} justifyContent="space-between">
           <Text wrap="truncate">{draw(compactSegs)}</Text>
           <Box flexShrink={0}>
             <Text>{'  '}</Text>
@@ -600,7 +600,7 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
       {/* Drawn plain, as the band's own dim text: "1: push · 2: find bugs · ...", the repo's switches on the right */}
       {/* Each action keeps its separator; on a narrow screen they wrap whole, and the switches drop to
           their own line, rather than running together */}
-      <Box marginLeft={INDENT} width={total - 4} justifyContent="space-between" flexWrap="wrap">
+      <Box marginLeft={view.isCardCompact ? 0 : INDENT} width={view.isCardCompact ? INDENT + total - 4 : total - 4} justifyContent="space-between" flexWrap="wrap">
         <Box flexWrap="wrap" flexShrink={1}>
           {view.actions.map((action, i) => (
             <Box key={`action-box-${action.key}`} flexShrink={0}>
