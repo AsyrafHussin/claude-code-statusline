@@ -129,6 +129,7 @@ describe('settings', () => {
       noAttribution: false,
       gitStrict: true,
       spotify: true,
+      plan: '',
     })
     expect(readConfig({ initials: 'AH', cardColor: '#000000' })).toMatchObject({ initials: 'AH', card: '#000000' })
   })

@@ -58,6 +58,12 @@
       "title": "Spotify",
       "description": "While Spotify runs, show what it plays, with album art and controls, under the band (macOS)",
       "default": true
+    },
+    "plan": {
+      "type": "string",
+      "title": "Plan",
+      "description": "Your Claude plan as the band shows it, such as Max 20x; empty reads it from Claude Code's own config",
+      "default": ""
     }
   }
 }

@@ -33,6 +33,7 @@ Each is a row in `/config`, or run `/plugin configure statusline-band@claude-cod
 | `noAttribution` | `false` | Leave Co-Authored-By, Claude-Session and the Claude Code footer out of commits and pull requests |
 | `gitStrict` | `true` | On: with a git switch on auto, only plain commands naming their repo with `-C` run without a prompt. Off: any git command runs without a prompt while the repo's switch is on auto |
 | `spotify` | `true` | While Spotify runs, show what it plays under the band, with album art, a progress bar and controls (macOS) |
+| `plan` | empty | Your Claude plan as shown, such as `Max 20x`; empty reads it from Claude Code's own `~/.claude.json` (updated when Claude Code starts or signs in) |
 
 ## What it runs, reads, keeps and sends
 

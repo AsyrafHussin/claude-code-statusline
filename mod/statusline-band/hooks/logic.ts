@@ -9,7 +9,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // What each person sets for themselves in /config, the manifest's userConfig, with out-of-range numbers clamped
-export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, noAttribution: false, gitStrict: true, spotify: true }
+export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, noAttribution: false, gitStrict: true, spotify: true, plan: '' }
 
 export const readConfig = (options: PluginOptions) => {
   const text = (key: string, fallback: string) => (typeof options[key] === 'string' ? (options[key] as string) : fallback)
@@ -23,6 +23,7 @@ export const readConfig = (options: PluginOptions) => {
     noAttribution: typeof options.noAttribution === 'boolean' ? options.noAttribution : DEFAULTS.noAttribution,
     gitStrict: typeof options.gitStrict === 'boolean' ? options.gitStrict : DEFAULTS.gitStrict,
     spotify: typeof options.spotify === 'boolean' ? options.spotify : DEFAULTS.spotify,
+    plan: text('plan', DEFAULTS.plan).trim(),
   }
 }
 
