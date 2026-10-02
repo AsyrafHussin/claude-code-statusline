@@ -1,10 +1,20 @@
 {
   "name": "statusline-band",
-  "version": "0.1.1",
-  "description": "Project, git, model and usage bars in a band above the prompt",
+  "version": "0.2.0",
+  "description": "A panel above the prompt with rate limits and their pace, context, cost and tokens, git status, and Clawd beside it",
   "author": {
     "name": "Asyraf Hussin"
   },
+  "homepage": "https://github.com/AsyrafHussin/claude-code-statusline",
+  "repository": "https://github.com/AsyrafHussin/claude-code-statusline",
+  "license": "MIT",
+  "keywords": [
+    "statusline",
+    "rate-limits",
+    "usage",
+    "git",
+    "mod"
+  ],
   "types": "./types/index.d.ts",
   "userConfig": {
     "initials": {

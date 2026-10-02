@@ -179,17 +179,18 @@ claude plugin test mod/statusline-band
 
 It fetches the upstream in the background every 5 minutes by default (never prompting for credentials) so `behind` stays current. It also toasts once when a rate limit passes 80% and 95%, and once when its pace would use it up before the reset, and shows a `compact` button when context passes 80%.
 
-To load it in every session, add its folder to the `env` block of `~/.claude/settings.json` (and remove `statusLine` if you no longer want the Bash version as well):
+### Install the mod
 
-```json
-{
-  "env": {
-    "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-code-statusline/mod/statusline-band"
-  }
-}
+Install it as a plugin from this repo's marketplace:
+
+```
+/plugin marketplace add AsyrafHussin/claude-code-statusline
+/plugin install statusline-band@claude-code-statusline
 ```
 
-Or try it for one session with `claude --plugin-dir ./mod/statusline-band`. To show your own initials on Clawd's shirt, change `SHIRT_TEXT` in `mod/statusline-band/hooks/register.tsx`.
+Then set your initials and the rest in `/config` (see Settings above). Remove `statusLine` from `~/.claude/settings.json` if you no longer want the Bash version as well.
+
+To work on the mod itself, load it from a clone instead: `claude --plugin-dir ./mod/statusline-band` for one session, or its folder under `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json` for every session. Edits then reload as you save.
 
 ## Customization
 

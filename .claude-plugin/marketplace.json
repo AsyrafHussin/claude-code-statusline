@@ -1,0 +1,14 @@
+{
+  "name": "claude-code-statusline",
+  "owner": {
+    "name": "Asyraf Hussin"
+  },
+  "description": "Claude Code status line and usage band by Asyraf Hussin",
+  "plugins": [
+    {
+      "name": "statusline-band",
+      "source": "./mod/statusline-band",
+      "description": "A panel above the prompt with rate limits and their pace, context, cost and tokens, git status, and Clawd beside it"
+    }
+  ]
+}
