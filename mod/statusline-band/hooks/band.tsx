@@ -23,8 +23,9 @@ import type { Limit, Mood, Music, Snapshot, TurnTokens } from '../types'
 // The elements the band draws with, as $.ui.resolve gives them; Raster only on the terminal
 export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & Partial<Pick<Elements['terminal'], 'Raster'>>
 
-// The album art's box, in cells: each cell shows two pixels, so the picture is 6 by 6, three rows tall
-export const ART_COLUMNS = 6
+// The album art's box, in cells: each cell shows two pixels, so the picture is 7 by 6, three rows tall,
+// as wide as Clawd's head and shirt so it sits square under him
+export const ART_COLUMNS = 7
 export const ART_ROWS = 3
 const SPOTIFY_GREEN = '#1db954'
 export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open'
@@ -74,6 +75,8 @@ const SWEAT_COLOR = '#60a5fa'
 const SPARK_COLOR = '#fde047'
 const SLEEP_COLOR = '#a1a1aa'
 const CLAWD_WIDTH = 11
+// The column where Clawd's head and shirt begin, past the two columns kept for dust and his arm
+const CLAWD_BODY_FROM = 3
 // Where the actions under the card start, and the Spotify text with them: past Clawd and the frame's edge
 const INDENT = CLAWD_WIDTH + CARD_INSET + 3
 const CLAWD_HEAD = ' ▐▛███▜▌ '
@@ -360,7 +363,7 @@ export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
     return (
       <Box>
         {/* The album art sits under Clawd, in the same columns, so the text lines up with the actions */}
-        <Box width={INDENT} flexShrink={0} justifyContent="center">
+        <Box width={INDENT} flexShrink={0} paddingLeft={CLAWD_BODY_FROM}>
           {hasArt && m.art ? <Raster key="album-art" columns={ART_COLUMNS} rows={ART_ROWS} cells={m.art} /> : null}
         </Box>
         <Box flexDirection="column" width={width}>
