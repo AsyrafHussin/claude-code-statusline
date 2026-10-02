@@ -47,7 +47,9 @@ pct_color() {
 format_tokens() {
   local num=$1
   case "$num" in '' | *[!0-9]*) printf '?'; return ;; esac
-  if [ "$num" -ge 1000000 ]; then
+  if [ "$num" -ge 999950000 ]; then
+    awk -v n="$num" 'BEGIN {printf "%.1fb", n / 1000000000}'
+  elif [ "$num" -ge 999500 ]; then
     awk -v n="$num" 'BEGIN {printf "%.1fm", n / 1000000}'
   elif [ "$num" -ge 1000 ]; then
     awk -v n="$num" 'BEGIN {printf "%.0fk", n / 1000}'

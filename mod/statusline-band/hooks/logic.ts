@@ -41,8 +41,15 @@ export const prettyModel = (id: string) => {
   return family ? `${family[0]?.toUpperCase()}${family.slice(1)} ${major}.${minor}` : id
 }
 
+// Tokens as 999, 2k, 2.4m or 1.2b; a count that would round up to "1000k" or "1000.0m" takes the next unit
 export const formatTokens = (n: number) =>
-  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}m` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`
+  n >= 999_950_000
+    ? `${(n / 1_000_000_000).toFixed(1)}b`
+    : n >= 999_500
+      ? `${(n / 1_000_000).toFixed(1)}m`
+      : n >= 1000
+        ? `${Math.round(n / 1000)}k`
+        : `${n}`
 
 export const formatUsd = (usd: number) => (usd >= 100 ? `$${Math.round(usd)}` : `$${usd.toFixed(2)}`)
 

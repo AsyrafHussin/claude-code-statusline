@@ -107,6 +107,10 @@ describe('formatting', () => {
     expect(formatTokens(999)).toBe('999')
     expect(formatTokens(1500)).toBe('2k')
     expect(formatTokens(2_400_000)).toBe('2.4m')
+    expect(formatTokens(999_600)).toBe('1.0m')
+    expect(formatTokens(655_700_000)).toBe('655.7m')
+    expect(formatTokens(999_960_000)).toBe('1.0b')
+    expect(formatTokens(1_181_600_000)).toBe('1.2b')
   })
 
   test('model ids', () => {
