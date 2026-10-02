@@ -81,7 +81,7 @@ export function drawSearchPane({ Box, Button, Text, Input }: Kit, view: SearchVi
   const found = view.status === 'found' && view.tracks.length > 0
   const count = found ? `${view.tracks.length} tracks` : view.status === 'searching' ? 'searching…' : ''
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingLeft={1} paddingRight={3}>
       <Box justifyContent="space-between">
         <Text color={SPOTIFY_GREEN} bold>{'● Spotify'}</Text>
         <Text dimColor>{count}</Text>
@@ -108,7 +108,7 @@ export function drawSearchPane({ Box, Button, Text, Input }: Kit, view: SearchVi
           const isPlaying = track.uri === view.playingUri
           const sub = [track.artist, track.album].filter(Boolean).join(' · ')
           return (
-            <Box key={`found-${track.uri}`} flexDirection="column" marginBottom={1}>
+            <Box key={`found-${track.uri}`} flexDirection="column">
               <Box justifyContent="space-between">
                 <Box flexShrink={1}>
                   <Text color={SPOTIFY_GREEN}>{isPlaying ? '♪ ' : '  '}</Text>
@@ -127,7 +127,7 @@ export function drawSearchPane({ Box, Button, Text, Input }: Kit, view: SearchVi
         })}
       </Box>
       {found ? (
-        <Box flexDirection="column">
+        <Box flexDirection="column" marginTop={1}>
           <Text dimColor wrap="truncate">{RULE}</Text>
           <Text dimColor wrap="truncate">
             <Text color={SPOTIFY_GREEN}>{'▶ '}</Text>

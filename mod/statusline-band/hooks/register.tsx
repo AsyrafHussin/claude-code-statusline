@@ -556,6 +556,8 @@ async function controlSpotify($: EngineInterface, command: MusicCommand) {
 // in the Spotify app through AppleScript
 
 const SEARCH_LIMIT = 10
+// The rows the search wants: heading, the framed box, ten tracks of two lines each, the hint, and gaps
+const SEARCH_ROWS = 1 + 1 + 3 + 1 + SEARCH_LIMIT * 2 + 1 + 2
 // The app token, kept until a minute before it expires
 let spotifyToken: { value: string; until: number } | null = null
 
@@ -606,7 +608,7 @@ async function openSearch($: EngineInterface) {
       tracks: [],
     }))
   }
-  await $.ui.open({ id: SEARCH_PANE, title: 'Search Spotify', focus: true, closeOnEscape: true, holdToasts: true, rows: 20, columns: 72 })
+  await $.ui.open({ id: SEARCH_PANE, title: 'Search Spotify', focus: true, closeOnEscape: true, holdToasts: true, rows: SEARCH_ROWS, columns: 72 })
 }
 
 async function searchSpotify($: EngineInterface, query: string) {
