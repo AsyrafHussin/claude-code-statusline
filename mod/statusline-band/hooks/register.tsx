@@ -332,17 +332,14 @@ async function stepsOfAliases($: EngineInterface, dir: string, aliases: string[]
 const CHEER_MS = 3500
 
 // The Claude plan: the plan setting when set, else Claude Code's own config, of which only the account
-// type and tier are read. Claude Code updates that file when it starts or signs in, so it is read again
-// every 10 minutes and an upgrade shows once Claude Code has seen it
-const PLAN_EVERY_MS = 10 * 60_000
-let planReadAt = 0
-async function readPlan($: EngineInterface, now: number) {
+// type and tier are read, once per load. Claude Code updates that file when it starts or signs in, so
+// an upgrade shows from the next start
+async function readPlan($: EngineInterface) {
   if (runtime.config.plan) return runtime.config.plan
-  if (runtime.plan !== undefined && now - planReadAt < PLAN_EVERY_MS) return runtime.plan
+  if (runtime.plan !== undefined) return runtime.plan
   const home = await $.env.get('HOME')
   const text = home ? await $.fs.read(`${home}/.claude.json`).catch(() => '') : ''
   runtime.plan = typeof text === 'string' ? planLabel(text) : null
-  planReadAt = now
   return runtime.plan
 }
 
@@ -380,7 +377,7 @@ async function readAndDraw($: EngineInterface) {
     git: repo,
     model: prettyModel(model),
     effort: runtime.effort,
-    plan: (await readPlan($, now)) ?? undefined,
+    plan: (await readPlan($)) ?? undefined,
     startedAt: usage.startedAt,
     now,
     day,
