@@ -65,29 +65,25 @@ const ACTIONS: Action[] = [
   {
     key: 'push',
     label: 'push',
-    hotkey: '1',
     prompt: 'Commit any uncommitted changes with a clear message, then push the current branch.',
   },
   {
     key: 'bugs',
     label: 'find bugs',
-    hotkey: '2',
     prompt:
       'Review the uncommitted changes and the commits not yet pushed in this repo for bugs; if there are none, review the last few commits instead. Verify each one before reporting it, and list them before fixing anything.',
   },
   {
     key: 'test',
     label: 'run tests',
-    hotkey: '3',
     prompt: "Run this project's tests, typecheck and linters, and report what fails.",
   },
   {
     key: 'summary',
     label: 'summarize',
-    hotkey: '4',
     prompt: 'Summarize what we changed in this session in a few short lines.',
   },
-  { key: 'quick-commit', label: 'quick commit', hotkey: '5' },
+  { key: 'quick-commit', label: 'quick commit' },
 ]
 
 // ── Usage kept across sessions: cost and tokens, the limits' recent pace, toasts shown, reset times

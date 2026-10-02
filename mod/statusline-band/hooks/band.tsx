@@ -43,7 +43,7 @@ const BLINK_CELLS = logoCells(BLINK_FRAME)
 export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open' | 'search' | 'compact'
 
 // A button under the card: most send a prompt as if typed; one with no prompt runs itself (quick commit)
-export type Action = { key: string; label: string; hotkey: string; prompt?: string }
+export type Action = { key: string; label: string; prompt?: string }
 
 // What the band needs to draw: the snapshot and the moment's state, and what each press does
 export type BandView = {
@@ -610,7 +610,6 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
                 plain
                 dimColor
                 label={action.label}
-                hotkey={action.hotkey}
                 onPress={() => view.onAction(action)}
               />
             </Box>
