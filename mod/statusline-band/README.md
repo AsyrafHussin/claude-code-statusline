@@ -35,7 +35,7 @@ Each is a row in `/config`, or run `/plugin configure statusline-band@claude-cod
 | `spotify` | `true` | While Spotify runs, show what it plays under the band, with Beatbot dancing, a progress bar and controls (macOS) |
 | `plan` | empty | Your Claude plan as shown, such as `Max 20x`; empty reads it from Claude Code's own `~/.claude.json` (updated when Claude Code starts or signs in) |
 | `spotifyClientId` | empty | Client ID of your own app at developer.spotify.com/dashboard, for searching Spotify |
-| `spotifyClientSecret` | empty | Client secret of that app; kept in secure storage |
+| `spotifyClientSecret` | empty | Client secret of that app. `/config` leaves secret settings out, so keep it in the macOS Keychain instead: `security add-generic-password -U -s statusline-band-spotify -a client-secret -w` (it asks for the secret, hidden) |
 
 ## What it runs, reads, keeps and sends
 

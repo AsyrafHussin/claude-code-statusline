@@ -559,10 +559,26 @@ const SEARCH_LIMIT = 10
 // The app token, kept until a minute before it expires
 let spotifyToken: { value: string; until: number } | null = null
 
+// The app's client secret: the setting when it holds one, else the macOS Keychain item KEYCHAIN_SERVICE,
+// since /config leaves out settings marked sensitive. Read once per load
+const KEYCHAIN_SERVICE = 'statusline-band-spotify'
+let keychainSecret: string | null | undefined
+async function readSpotifySecret($: EngineInterface) {
+  if (runtime.config.spotifyClientSecret) return runtime.config.spotifyClientSecret
+  if (keychainSecret !== undefined) return keychainSecret
+  const found = await $.process
+    .run(['security', 'find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'], { timeoutMs: 5000 })
+    .catch(() => null)
+  keychainSecret = found?.exitCode === 0 && found.stdout.trim() ? found.stdout.trim() : null
+  return keychainSecret
+}
+
 async function readSpotifyToken($: EngineInterface) {
   const now = await $.clock.now()
   if (spotifyToken && now < spotifyToken.until) return spotifyToken.value
-  const { spotifyClientId: id, spotifyClientSecret: secret } = runtime.config
+  const id = runtime.config.spotifyClientId
+  const secret = await readSpotifySecret($)
+  if (!id || !secret) return null
   const got = await $.http
     .fetch('https://accounts.spotify.com/api/token', {
       method: 'POST',
@@ -578,12 +594,15 @@ async function readSpotifyToken($: EngineInterface) {
 }
 
 async function openSearch($: EngineInterface) {
-  const { spotifyClientId: id, spotifyClientSecret: secret } = runtime.config
+  const id = runtime.config.spotifyClientId
+  const secret = await readSpotifySecret($)
   if (!id || !secret) {
     await update($, search, (): SpotifySearch => ({
       query: '',
       status: 'failed',
-      message: 'Set spotifyClientId and spotifyClientSecret in /config first (an app at developer.spotify.com/dashboard).',
+      message: !id
+        ? 'Set spotifyClientId in /config first (your app at developer.spotify.com/dashboard).'
+        : `Add the client secret to the Keychain: security add-generic-password -U -s ${KEYCHAIN_SERVICE} -a client-secret -w`,
       tracks: [],
     }))
   }
@@ -599,7 +618,7 @@ async function searchSpotify($: EngineInterface, query: string) {
     await update($, search, (): SpotifySearch => ({
       query: text,
       status: 'failed',
-      message: 'Spotify would not give a token: check spotifyClientId and spotifyClientSecret in /config.',
+      message: 'Spotify would not give a token: check the client ID in /config and the secret in the Keychain.',
       tracks: [],
     }))
     return

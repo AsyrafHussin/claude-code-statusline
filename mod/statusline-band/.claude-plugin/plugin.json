@@ -74,7 +74,7 @@
     "spotifyClientSecret": {
       "type": "string",
       "title": "Spotify client secret",
-      "description": "From the same app; kept in secure storage",
+      "description": "From the same app; kept in secure storage. Or leave it empty and keep it in the macOS Keychain as statusline-band-spotify",
       "default": "",
       "sensitive": true
     }
