@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 
 import type { CostLedger, HistoryDay, Limit, PaceLog, Snapshot, TokenLedger } from '../types'
 
@@ -24,7 +24,6 @@ const PACE_MIN_SPAN_MS = 30 * 60_000
 const ALERT_THRESHOLDS = [80, 95]
 const COMPACT_AT = 80
 const LEDGER_DAYS = 62
-const ROLLING_DAYS = 30
 // The pane with each day's cost and tokens, opened by /usage-history or the "30d" label
 const HISTORY_PANE = 'usage-history'
 const HISTORY_BAR = 30
@@ -37,7 +36,6 @@ const COST_KEY = 'costs-v2'
 const TOKEN_KEY = 'tokens-v1'
 const GIT_TIMEOUT = { timeoutMs: 5000 }
 // Fetched in the background so "behind" stays true; never prompts for credentials
-const FETCH_EVERY_MS = 5 * 60_000
 const FETCH_INIT = {
   timeoutMs: 30_000,
   env: { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' },
@@ -48,7 +46,6 @@ const FETCH_INIT = {
 const CLAWD_COLOR = '#d97757'
 const DUST_COLOR = '#78716c'
 const SHIRT_COLOR = '#2563eb'
-const SHIRT_TEXT = ' A H '
 const CLAWD_HEAD = ' ▐▛███▜▌ '
 const CLAWD_HEAD_BLINK = ' ▐█████▌ '
 const BLINK_EVERY_MS = 4_500
@@ -63,8 +60,6 @@ const CLAWD_WIDTH = 11
 // Room left for the band's own collapse mark ([-]) on the right, with a margin
 const ENGINE_MARK_WIDTH = 8
 const RUNNER_TICK_MS = 120
-// Empty rows above and below the stats, so the panel has room to breathe
-const PAD_ROWS = 1
 // Columns of card left and right of the frame
 const CARD_INSET = 1
 const RUNNER_MAX_TICKS = 15_000
@@ -78,8 +73,30 @@ const COLORS = {
   model: '#7dd3fc',
   border: '#71717a',
   borderBusy: '#d97757',
-  // The card behind the panel, a touch off pure black
-  card: '#0a0a0a',
+}
+
+// What each person sets for themselves in /config (the manifest's userConfig); read in register,
+// so a change there reloads the module with the new values
+const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, fetchMinutes: 5 }
+let config = DEFAULTS
+
+const readConfig = (options: PluginOptions) => {
+  const text = (key: string, fallback: string) => (typeof options[key] === 'string' ? (options[key] as string) : fallback)
+  const whole = (key: string, fallback: number, lo: number, hi: number) =>
+    typeof options[key] === 'number' ? Math.min(hi, Math.max(lo, Math.round(options[key] as number))) : fallback
+  return {
+    initials: text('initials', DEFAULTS.initials),
+    card: text('cardColor', DEFAULTS.card),
+    padRows: whole('padRows', DEFAULTS.padRows, 0, 2),
+    rollingDays: whole('historyDays', DEFAULTS.rollingDays, 7, 62),
+    fetchMinutes: whole('fetchMinutes', DEFAULTS.fetchMinutes, 0, 60),
+  }
+}
+
+// Up to two initials across the shirt, as " A H "; none leaves it plain
+const shirtText = (initials: string) => {
+  const [a = ' ', b = ' '] = [...initials.replace(/\s/g, '').toUpperCase()]
+  return ` ${a} ${b} `
 }
 
 const toneHex = (pct: number) => (pct >= 80 ? COLORS.hot : pct >= 50 ? COLORS.warn : COLORS.ok)
@@ -150,8 +167,8 @@ function startTimers($: EngineInterface) {
   if (hasTimers) return
   hasTimers = true
   $.clock.every(30_000, () => void refresh($))
-  void fetchUpstream($)
-  $.clock.every(FETCH_EVERY_MS, () => void fetchUpstream($))
+  if (config.fetchMinutes > 0) void fetchUpstream($)
+  if (config.fetchMinutes > 0) $.clock.every(config.fetchMinutes * 60_000, () => void fetchUpstream($))
   $.clock.every(BLINK_EVERY_MS, () => {
     void update($, isBlinking, () => true)
     $.clock.after(BLINK_FOR_MS, () => void update($, isBlinking, () => false))
@@ -256,9 +273,9 @@ async function openHistory($: EngineInterface) {
     $.process.run(['date', '+%Y-%m-%d']),
   ])
   const today = clock.stdout.trim()
-  const days = Array.from({ length: ROLLING_DAYS }, (_, i) => shiftDay(today, i - (ROLLING_DAYS - 1)))
+  const days = Array.from({ length: config.rollingDays }, (_, i) => shiftDay(today, i - (config.rollingDays - 1)))
   await update($, history, () => days.map(day => ({ day, usd: costs?.days[day] ?? 0, tokens: tokens?.days[day] ?? 0 })))
-  await $.ui.open({ id: HISTORY_PANE, title: `Usage, last ${ROLLING_DAYS} days` })
+  await $.ui.open({ id: HISTORY_PANE, title: `Usage, last ${config.rollingDays} days` })
 }
 
 // Keeps a reading of each window every few minutes, across sessions, and gives each window's
@@ -351,7 +368,7 @@ async function refresh($: EngineInterface) {
     const costUsd = usage.cost?.usd ?? null
     const ledger = costUsd !== null ? await recordCost($, sessionId, costUsd, day, usage.startedAt >= midnight) : null
     const tokenLedger = (await $.store.get(TOKEN_KEY)) as TokenLedger | undefined
-    const since = shiftDay(day, -(ROLLING_DAYS - 1))
+    const since = shiftDay(day, -(config.rollingDays - 1))
     const readings = await Promise.all(
       usage.rateLimits.map(async (l): Promise<Limit> => ({
         kind: l.kind,
@@ -407,14 +424,16 @@ async function compactNow($: EngineInterface) {
   }
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  config = readConfig(options)
+
   on('session.start', async ($, e, next) => {
     const ran = await next(e)
     startTimers($)
     void refresh($)
     await $.command.register({
       name: HISTORY_PANE,
-      description: `Show cost and tokens for each of the last ${ROLLING_DAYS} days`,
+      description: `Show cost and tokens for each of the last ${config.rollingDays} days`,
     })
     return ran
   })
@@ -449,7 +468,7 @@ export const register: Register = on => {
         })}
         <Text> </Text>
         <Text wrap="truncate">
-          <Text dimColor>{`${ROLLING_DAYS} days  `}</Text>
+          <Text dimColor>{`${config.rollingDays} days  `}</Text>
           <Text color={COLORS.ok} bold>{formatUsd(usd)}</Text>
           <Text dimColor>{' · '}</Text>
           <Text color={COLORS.model}>{formatTokens(tokens)}</Text>
@@ -585,7 +604,7 @@ export const register: Register = on => {
       // The 30 days' label is a button that opens the history pane, so it is drawn apart
       if (s.rollingUsd !== null) addTotal(s.rollingUsd, counted.rolling)
     }
-    const historyLabel = `${ROLLING_DAYS}d`
+    const historyLabel = `${config.rollingDays}d`
     const hasHistory = s.costUsd !== null && s.rollingUsd !== null
     const costWidth = width(cost) + (hasHistory ? historyLabel.length : 0) + 1
     // When the whole line does not fit beside the title, the session cost alone still shows
@@ -644,7 +663,7 @@ export const register: Register = on => {
           {puff(1)}
           <Text color={CLAWD_COLOR}>{pose.arms[0]}</Text>
           <Text color={SHIRT_COLOR}>▜</Text>
-          <Text backgroundColor={SHIRT_COLOR} color="#ffffff" bold>{SHIRT_TEXT}</Text>
+          <Text backgroundColor={SHIRT_COLOR} color="#ffffff" bold>{shirtText(config.initials)}</Text>
           <Text color={SHIRT_COLOR}>▛</Text>
           <Text color={CLAWD_COLOR}>{pose.arms[1]}</Text>
         </Text>
@@ -719,7 +738,7 @@ export const register: Register = on => {
     // A side of the frame, one "│" per row of the stats and their padding
     const edge = (side: string) => (
       <Box flexDirection="column">
-        {Array.from({ length: PAD_ROWS * 2 + 1 }, (_, i) => (
+        {Array.from({ length: config.padRows * 2 + 1 }, (_, i) => (
           <Text key={`${side}${i}`} wrap="truncate">{draw([line('│')])}</Text>
         ))}
       </Box>
@@ -729,7 +748,7 @@ export const register: Register = on => {
       <Box paddingX={1} alignItems="center">
         {clawd}
         {/* The card's own edge columns are painted over below its first row, so the frame sits one in */}
-        <Box flexDirection="column" backgroundColor={COLORS.card} paddingX={CARD_INSET}>
+        <Box flexDirection="column" backgroundColor={config.card} paddingX={CARD_INSET}>
           <Box>
             <Text wrap="truncate">{draw(topLeft)}</Text>
             {showFull && hasHistory && (
@@ -739,7 +758,7 @@ export const register: Register = on => {
           </Box>
           <Box width={total}>
             {edge('l')}
-            <Box flexGrow={1} paddingX={2} paddingY={PAD_ROWS} justifyContent="space-between">
+            <Box flexGrow={1} paddingX={2} paddingY={config.padRows} justifyContent="space-between">
               <Box>
                 {stats.flatMap((st, i) => [
                   ...(i === 0 ? [] : [<Text key={`div-${st.key}`} wrap="truncate">{draw([divider])}</Text>]),
@@ -752,7 +771,7 @@ export const register: Register = on => {
                         left={0}
                         display="none"
                         hover={{ display: 'flex' }}
-                        backgroundColor={COLORS.card}
+                        backgroundColor={config.card}
                       >
                         <Text wrap="truncate">{draw(st.card)}</Text>
                       </Box>

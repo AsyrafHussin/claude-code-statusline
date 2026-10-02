@@ -2,6 +2,40 @@
   "name": "statusline-band",
   "version": "0.1.1",
   "description": "Project, git, model and usage bars in a band above the prompt",
-  "author": { "name": "Asyraf Hussin" },
-  "types": "./types/index.d.ts"
+  "author": {
+    "name": "Asyraf Hussin"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "initials": {
+      "type": "string",
+      "title": "Initials",
+      "description": "Up to two letters on Clawd's shirt; empty leaves it plain",
+      "default": ""
+    },
+    "cardColor": {
+      "type": "string",
+      "title": "Card color",
+      "description": "Background of the card behind the panel, as #rrggbb",
+      "default": "#0a0a0a"
+    },
+    "padRows": {
+      "type": "number",
+      "title": "Padding rows",
+      "description": "Empty rows above and below the stats, 0 to 2",
+      "default": 1
+    },
+    "historyDays": {
+      "type": "number",
+      "title": "History days",
+      "description": "Days the rolling cost total and the history pane cover, 7 to 62",
+      "default": 30
+    },
+    "fetchMinutes": {
+      "type": "number",
+      "title": "Fetch every (minutes)",
+      "description": "How often the upstream is fetched so 'behind' stays current; 0 turns it off",
+      "default": 5
+    }
+  }
 }

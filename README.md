@@ -142,12 +142,34 @@ cd claude-code-statusline
 | **ctx** | Context usage as a bar, with tokens used out of the window |
 | **Cost** | Session cost and hourly rate, plus today's and the last 30 days' spend across sessions; each with its tokens (read and written, cache included), counted from when the mod was installed |
 | **Bottom edge** | Running subagents; the last reply's input (with the cached share) and output tokens on the right beside the session time; uncommitted files and lines, unpushed commits and their lines, commits behind, stashes, time since the last commit; then session duration and the time |
-| **Card** | A near-black card behind the frame; `PAD_ROWS` sets the empty rows around the stats and `COLORS.card` the color |
+| **Card** | A near-black card behind the frame, with empty rows around the stats |
 | **Clawd** | Stands and blinks when idle, runs while Claude works; the border turns orange too |
 
 Hover over a rate limit for its pace: across the window, over the last 3 hours, and when it would run out. Click the `30d` label on the top right, or run `/usage-history`, to open a pane with each of the last 30 days' cost and tokens. Running subagents show on the bottom left as `↻ 2 agents`, and the last reply's input shows how much came from the cache.
 
-It fetches the upstream in the background every 5 minutes (never prompting for credentials) so `behind` stays current. It also toasts once when a rate limit passes 80% and 95%, and once when its pace would use it up before the reset, and shows a `compact` button when context passes 80%.
+### Settings
+
+Each is a row in `/config`, or set them in `~/.claude/settings.json`:
+
+```json
+{
+  "pluginConfigs": {
+    "statusline-band": {
+      "options": { "initials": "AH", "cardColor": "#0a0a0a", "padRows": 1, "historyDays": 30, "fetchMinutes": 5 }
+    }
+  }
+}
+```
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| `initials` | empty | Up to two letters on Clawd's shirt |
+| `cardColor` | `#0a0a0a` | Background of the card |
+| `padRows` | `1` | Empty rows above and below the stats, 0 to 2 |
+| `historyDays` | `30` | Days the rolling cost and the history pane cover, 7 to 62 |
+| `fetchMinutes` | `5` | How often the upstream is fetched; `0` turns it off |
+
+It fetches the upstream in the background every 5 minutes by default (never prompting for credentials) so `behind` stays current. It also toasts once when a rate limit passes 80% and 95%, and once when its pace would use it up before the reset, and shows a `compact` button when context passes 80%.
 
 To load it in every session, add its folder to the `env` block of `~/.claude/settings.json` (and remove `statusLine` if you no longer want the Bash version as well):
 
