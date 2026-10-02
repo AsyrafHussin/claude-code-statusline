@@ -6,6 +6,7 @@ import {
   BAR_CELLS,
   WINDOW_MS,
   barCells,
+  formatClock,
   formatDuration,
   formatReset,
   formatTokens,
@@ -17,10 +18,18 @@ import {
 import type { GitStep } from './logic'
 import { COLORS, LIMIT_LABELS } from './state'
 import type { Config, GitAuto } from './state'
-import type { Limit, Mood, Snapshot, TurnTokens } from '../types'
+import type { Limit, Mood, Music, Snapshot, TurnTokens } from '../types'
 
-// The elements the band draws with, as $.ui.resolve gives them
-export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'>
+// The elements the band draws with, as $.ui.resolve gives them; Raster only on the terminal
+export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & Partial<Pick<Elements['terminal'], 'Raster'>>
+
+// The album art's box, in cells: each cell shows two pixels, so the picture is 10 by 10
+export const ART_COLUMNS = 10
+export const ART_ROWS = 5
+const SPOTIFY_GREEN = '#1db954'
+const PROGRESS_CELLS = 28
+
+export type MusicCommand = 'playpause' | 'next track' | 'previous track'
 
 // A button under the card: most send a prompt as if typed; one with no prompt runs itself (quick commit)
 export type Action = { key: string; label: string; hotkey: string; prompt?: string }
@@ -39,11 +48,15 @@ export type BandView = {
   // The running animation's frame while Claude works, else null
   tick: number | null
   isBlinking: boolean
+  // What Spotify plays, null when it plays nothing (or the setting is off)
+  music: Music | null
+  canDrawArt: boolean
   actions: Action[]
   onHistory: () => void
   onCompact: () => void
   onAction: (action: Action) => void
   onSwitch: (step: GitStep) => void
+  onMusic: (command: MusicCommand) => void
 }
 
 const RINGS = ['○', '◔', '◑', '◕', '●']
@@ -96,7 +109,7 @@ const clawdSide = (feeling: Mood, beat: number, dust: string[] | undefined): [st
   return [0, 1, 2].map(row => [dust?.[row] ?? '  ', DUST_COLOR])
 }
 
-export function drawBand({ Box, Button, Text }: Kit, view: BandView) {
+export function drawBand({ Box, Button, Text, Raster }: Kit, view: BandView) {
   const { s, config, turn, feeling, beat, tick, isWorking } = view
 
   // Pieces of text whose widths are known, so the frame can be drawn to fit them
@@ -403,6 +416,39 @@ export function drawBand({ Box, Button, Text }: Kit, view: BandView) {
             ])}
           </Box>
         )}
+      {/* Spotify, while it plays: the album art as pixels, the track, a progress bar and the controls */}
+      {view.music && (() => {
+        const m = view.music
+        const filled = m.durationMs > 0 ? Math.min(PROGRESS_CELLS, Math.round((m.positionMs / m.durationMs) * PROGRESS_CELLS)) : 0
+        return (
+          <Box marginLeft={CLAWD_WIDTH + CARD_INSET + 3} marginTop={1}>
+            {view.canDrawArt && Raster && m.art ? (
+              <Box marginRight={2}>
+                <Raster key="album-art" columns={ART_COLUMNS} rows={ART_ROWS} cells={m.art} />
+              </Box>
+            ) : null}
+            <Box flexDirection="column">
+              <Text wrap="truncate">
+                <Text color={SPOTIFY_GREEN}>{m.isPlaying ? '♫ ' : '❚❚ '}</Text>
+                <Text bold>{m.name}</Text>
+              </Text>
+              <Text wrap="truncate" dimColor>{[m.artist, m.album].filter(Boolean).join(' · ')}</Text>
+              <Text wrap="truncate">
+                <Text color={SPOTIFY_GREEN}>{'━'.repeat(filled)}</Text>
+                <Text dimColor>{'━'.repeat(PROGRESS_CELLS - filled)}</Text>
+                <Text dimColor>{`  ${formatClock(m.positionMs)} / ${formatClock(m.durationMs)}`}</Text>
+              </Text>
+              <Box>
+                <Button key="music-prev" plain label="◀◀" onPress={() => view.onMusic('previous track')} />
+                <Text>{'   '}</Text>
+                <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶'} onPress={() => view.onMusic('playpause')} />
+                <Text>{'   '}</Text>
+                <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next track')} />
+              </Box>
+            </Box>
+          </Box>
+        )
+      })()}
       </Box>
     </Box>
   )

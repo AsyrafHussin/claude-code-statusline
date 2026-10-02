@@ -9,7 +9,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // What each person sets for themselves in /config, the manifest's userConfig, with out-of-range numbers clamped
-export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, noAttribution: false, gitStrict: true }
+export const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, noAttribution: false, gitStrict: true, spotify: true }
 
 export const readConfig = (options: PluginOptions) => {
   const text = (key: string, fallback: string) => (typeof options[key] === 'string' ? (options[key] as string) : fallback)
@@ -22,6 +22,7 @@ export const readConfig = (options: PluginOptions) => {
     rollingDays: whole('historyDays', DEFAULTS.rollingDays, 7, 62),
     noAttribution: typeof options.noAttribution === 'boolean' ? options.noAttribution : DEFAULTS.noAttribution,
     gitStrict: typeof options.gitStrict === 'boolean' ? options.gitStrict : DEFAULTS.gitStrict,
+    spotify: typeof options.spotify === 'boolean' ? options.spotify : DEFAULTS.spotify,
   }
 }
 
@@ -368,4 +369,130 @@ export const gitGuide = (root: string, auto: Record<GitStep, boolean>, noAttribu
       ? ['Do not credit Claude in commits or pull requests: no Co-Authored-By line naming Claude, no Claude-Session line, no "Generated with Claude Code" footer.']
       : []),
   ].join('\n')
+}
+
+// ── Spotify
+
+// What Spotify is playing, as the AppleScript in register.tsx reports it: fields joined by the unit
+// separator (\x1f), so a track name with a newline or a comma stays whole
+export type NowPlaying = {
+  isPlaying: boolean
+  name: string
+  artist: string
+  album: string
+  durationMs: number
+  positionMs: number
+  artUrl: string
+  trackId: string
+}
+
+export const parseSpotify = (text: string): NowPlaying | null => {
+  const [state, name = '', artist = '', album = '', duration = '0', position = '0', artUrl = '', trackId = ''] = text
+    .replace(/\n$/, '')
+    .split('\x1f')
+  if (state !== 'playing' && state !== 'paused') return null
+  if (!name) return null
+  return {
+    isPlaying: state === 'playing',
+    name,
+    artist,
+    album,
+    durationMs: Number(duration) || 0,
+    // A locale may write the seconds with a decimal comma
+    positionMs: Math.round((Number(position.replace(',', '.')) || 0) * 1000),
+    artUrl,
+    trackId,
+  }
+}
+
+// Milliseconds as "3:07", or "1:02:07" past an hour
+export const formatClock = (ms: number) => {
+  const secs = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(secs / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  const s = String(secs % 60).padStart(2, '0')
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
+}
+
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+// Base64, written out so it needs nothing from the environment
+export const toBase64 = (bytes: Uint8Array) => {
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i] ?? 0
+    const b = bytes[i + 1] ?? 0
+    const c = bytes[i + 2] ?? 0
+    const n = (a << 16) | (b << 8) | c
+    out += B64[(n >> 18) & 63]
+    out += B64[(n >> 12) & 63]
+    out += i + 1 < bytes.length ? B64[(n >> 6) & 63] : '='
+    out += i + 2 < bytes.length ? B64[n & 63] : '='
+  }
+  return out
+}
+
+export const fromBase64 = (text: string) => {
+  const clean = text.replace(/[^A-Za-z0-9+/]/g, '')
+  const bytes = new Uint8Array(Math.floor((clean.length * 3) / 4))
+  let n = 0
+  let bits = 0
+  let at = 0
+  for (const ch of clean) {
+    n = (n << 6) | B64.indexOf(ch)
+    bits += 6
+    if (bits >= 8) {
+      bits -= 8
+      bytes[at++] = (n >> bits) & 0xff
+    }
+  }
+  return bytes.slice(0, at)
+}
+
+// The pixels of an uncompressed 24- or 32-bit BMP (what `sips -s format bmp` writes), top row first, as
+// 0xRRGGBB; null for anything else
+export const readBmp = (bytes: Uint8Array): { width: number; height: number; pixels: number[] } | null => {
+  if (bytes.length < 54 || bytes[0] !== 0x42 || bytes[1] !== 0x4d) return null
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const offset = view.getUint32(10, true)
+  const width = view.getInt32(18, true)
+  const rawHeight = view.getInt32(22, true)
+  const bpp = view.getUint16(28, true)
+  const compression = view.getUint32(30, true)
+  // 0: plain RGB; 3: bit fields, which sips uses for 32-bit with the usual BGRA order
+  if ((bpp !== 24 && bpp !== 32) || (compression !== 0 && compression !== 3) || width <= 0 || rawHeight === 0) return null
+  const height = Math.abs(rawHeight)
+  const isBottomUp = rawHeight > 0
+  const step = bpp / 8
+  const stride = Math.ceil((width * step) / 4) * 4
+  if (offset + stride * height > bytes.length) return null
+  const pixels: number[] = []
+  for (let y = 0; y < height; y += 1) {
+    const row = isBottomUp ? height - 1 - y : y
+    for (let x = 0; x < width; x += 1) {
+      const at = offset + row * stride + x * step
+      pixels.push(((bytes[at + 2] ?? 0) << 16) | ((bytes[at + 1] ?? 0) << 8) | (bytes[at] ?? 0))
+    }
+  }
+  return { width, height, pixels }
+}
+
+// A picture as Raster cells: each cell an upper half block (▀) whose ink is the upper pixel and whose
+// paper is the lower one, so a cell shows two pixels; little-endian u32 triplets, base64
+export const pixelsToCells = (picture: { width: number; height: number; pixels: number[] }, columns: number, rows: number) => {
+  const words = new Uint32Array(columns * rows * 3)
+  const at = (x: number, y: number) => {
+    const px = Math.min(picture.width - 1, Math.floor((x * picture.width) / columns))
+    const py = Math.min(picture.height - 1, Math.floor((y * picture.height) / (rows * 2)))
+    return picture.pixels[py * picture.width + px] ?? 0
+  }
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < columns; c += 1) {
+      const i = (r * columns + c) * 3
+      words[i] = 0x2580
+      words[i + 1] = at(c, r * 2)
+      words[i + 2] = at(c, r * 2 + 1)
+    }
+  }
+  return toBase64(new Uint8Array(words.buffer))
 }

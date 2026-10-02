@@ -4,7 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import { drawBand } from './band'
+import { ART_COLUMNS, ART_ROWS, drawBand } from './band'
 import type { Action } from './band'
 import {
   aliasSteps,
@@ -16,6 +16,10 @@ import {
   looseGitSteps,
   parsePlainGit,
   parseShortstat,
+  parseSpotify,
+  pixelsToCells,
+  readBmp,
+  fromBase64,
   parseStatusV2,
   placeFolder,
   prettyModel,
@@ -40,6 +44,7 @@ const lastTurn = atom({ plugin: 'statusline-band', key: 'lastTurn' } as const, n
 const history = atom({ plugin: 'statusline-band', key: 'history' } as const, [])
 const mood = atom({ plugin: 'statusline-band', key: 'mood' } as const, 'idle')
 const moodTick = atom({ plugin: 'statusline-band', key: 'moodTick' } as const, 0)
+const music = atom({ plugin: 'statusline-band', key: 'music' } as const, null)
 
 // The pane with each day's cost and tokens, opened by /usage-history or the window's label on the band;
 // a literal, so the engine's scan can read the hooks' matchers
@@ -449,10 +454,75 @@ function startTimers($: EngineInterface) {
   hasTimers = true
   $.clock.every(REFRESH_EVERY_MS, () => void refresh($))
   $.clock.every(MOOD_TICK_MS, () => void tickMood($))
+  if (runtime.config.spotify) {
+    void readSpotify($)
+    $.clock.every(SPOTIFY_EVERY_MS, () => void readSpotify($))
+  }
   $.clock.every(BLINK_EVERY_MS, () => {
     void update($, isBlinking, () => true)
     $.clock.after(BLINK_FOR_MS, () => void update($, isBlinking, () => false))
   })
+}
+
+// ── Spotify: what is playing, its album art as pixels, and the controls
+
+const SPOTIFY_EVERY_MS = 5_000
+const ART_DIR = '/tmp/statusline-band-art'
+// Asks only while Spotify runs ("is running" never launches it); fields joined by the unit separator
+const SPOTIFY_SCRIPT = `if application "Spotify" is running then
+  tell application "Spotify"
+    set s to player state as string
+    if s is "stopped" then return "stopped"
+    set t to current track
+    set sep to ASCII character 31
+    return s & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (duration of t) & sep & (player position as string) & sep & (artwork url of t) & sep & (id of t)
+  end tell
+end if
+return ""`
+
+// Album art as Raster cells, by its URL; each is fetched and drawn once per load
+const artCells = new Map<string, string | null>()
+
+// The album art at a URL, shrunk to the band's art box: curl fetches it, sips makes it a small BMP, and
+// its pixels become half-block cells. null when any step fails
+async function readArt($: EngineInterface, url: string, trackId: string) {
+  const known = artCells.get(url)
+  if (known !== undefined) return known
+  artCells.set(url, null)
+  const name = trackId.replace(/[^\w-]/g, '_')
+  const image = `${ART_DIR}/${name}.img`
+  const bmp = `${ART_DIR}/${name}.bmp`
+  const steps = [
+    ['mkdir', '-p', ART_DIR],
+    ['curl', '-sfL', '--max-time', '8', '-o', image, url],
+    ['sips', '-s', 'format', 'bmp', '-z', String(ART_ROWS * 2), String(ART_COLUMNS), image, '--out', bmp],
+  ]
+  for (const argv of steps) {
+    const ran = await $.process.run(argv, { timeoutMs: 10_000 }).catch(() => null)
+    if (ran?.exitCode !== 0) return null
+  }
+  const encoded = await $.process.run(['base64', '-i', bmp], { timeoutMs: 5000 }).catch(() => null)
+  const picture = encoded?.exitCode === 0 ? readBmp(fromBase64(encoded.stdout)) : null
+  const cells = picture ? pixelsToCells(picture, ART_COLUMNS, ART_ROWS) : null
+  artCells.set(url, cells)
+  return cells
+}
+
+async function readSpotify($: EngineInterface) {
+  const ran = await $.process.run(['osascript', '-e', SPOTIFY_SCRIPT], { timeoutMs: 4000 }).catch(() => null)
+  const playing = ran?.exitCode === 0 ? parseSpotify(ran.stdout) : null
+  if (playing === null) {
+    if ((await read($, music)) !== null) await update($, music, () => null)
+    return
+  }
+  const art = playing.artUrl ? await readArt($, playing.artUrl, playing.trackId) : null
+  await update($, music, () => ({ ...playing, art }))
+}
+
+// Play or pause, the next track or the one before, then read the state again at once
+async function controlSpotify($: EngineInterface, command: 'playpause' | 'next track' | 'previous track') {
+  await $.process.run(['osascript', '-e', `tell application "Spotify" to ${command}`], { timeoutMs: 4000 }).catch(() => null)
+  await readSpotify($)
 }
 
 // ── What the buttons do: quick commit, compact, and the suggestion after a turn
@@ -747,12 +817,15 @@ export const register: Register = (on, options) => {
       beat: await read($, moodTick),
       tick: isWorking ? await read($, frame) : null,
       isBlinking: await read($, isBlinking),
+      music: runtime.config.spotify ? await read($, music) : null,
+      canDrawArt: e.surface === 'terminal',
       actions: ACTIONS,
       onHistory: () => void openHistory($, s.day),
       onCompact: () => void compactNow($),
       onAction: action =>
         void (action.prompt === undefined ? quickCommit($) : $.prompt.submit({ text: action.prompt, asUser: true })),
       onSwitch: step => void toggleGitAuto($, step),
+      onMusic: command => void controlSpotify($, command),
     })
   })
 }

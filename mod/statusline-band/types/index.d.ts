@@ -22,6 +22,19 @@ export type TurnTokens = { input: number; output: number; cached?: number }
 // Clawd's mood while Claude is not working
 export type Mood = 'idle' | 'cheer' | 'sleep' | 'sweat'
 
+// What Spotify plays, with its album art as Raster cells (null when there is none)
+export type Music = {
+  isPlaying: boolean
+  name: string
+  artist: string
+  album: string
+  durationMs: number
+  positionMs: number
+  artUrl: string
+  trackId: string
+  art: string | null
+}
+
 // One day in the history pane
 export type HistoryDay = { day: string; usd: number; tokens: number }
 
@@ -77,6 +90,6 @@ export type CostLedger = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'statusline-band': { snap: Snapshot | null; isCompacting: boolean; frame: number; isBlinking: boolean; lastTurn: TurnTokens | null; history: HistoryDay[]; mood: Mood; moodTick: number }
+    'statusline-band': { snap: Snapshot | null; isCompacting: boolean; frame: number; isBlinking: boolean; lastTurn: TurnTokens | null; history: HistoryDay[]; mood: Mood; moodTick: number; music: Music | null }
   }
 }

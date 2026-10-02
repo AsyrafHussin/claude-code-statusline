@@ -6,13 +6,18 @@ import {
   cleanCommitMessage,
   gitGuide,
   dayLabel,
+  formatClock,
   formatReset,
   formatTokens,
+  fromBase64,
   gitDecision,
   isSensitivePath,
   withoutDataHeredocs,
   looseGitSteps,
   parsePlainGit,
+  parseSpotify,
+  pixelsToCells,
+  readBmp,
   parseShortstat,
   parseStatusV2,
   placeFolder,
@@ -22,6 +27,7 @@ import {
   shiftDay,
   shirtText,
   sumDays,
+  toBase64,
 } from './logic'
 
 const HOUR = 3_600_000
@@ -120,6 +126,7 @@ describe('settings', () => {
       rollingDays: 7,
       noAttribution: false,
       gitStrict: true,
+      spotify: true,
     })
     expect(readConfig({ initials: 'AH', cardColor: '#000000' })).toMatchObject({ initials: 'AH', card: '#000000' })
   })
@@ -350,3 +357,55 @@ describe('git guide', () => {
   })
 })
 
+
+describe('spotify', () => {
+  const S = '\x1f'
+  test('reads what is playing', () => {
+    const text = ['playing', 'Bohemian Rhapsody', 'Queen', 'A Night at the Opera', '354000', '61,5', 'https://i.scdn.co/image/x', 'spotify:track:1'].join(S)
+    expect(parseSpotify(`${text}\n`)).toEqual({
+      isPlaying: true,
+      name: 'Bohemian Rhapsody',
+      artist: 'Queen',
+      album: 'A Night at the Opera',
+      durationMs: 354000,
+      positionMs: 61500,
+      artUrl: 'https://i.scdn.co/image/x',
+      trackId: 'spotify:track:1',
+    })
+    expect(parseSpotify(['stopped', '', '', '', '0', '0', '', ''].join(S))).toBe(null)
+    expect(parseSpotify('')).toBe(null)
+  })
+
+  test('formats a clock', () => {
+    expect(formatClock(67_000)).toBe('1:07')
+    expect(formatClock(3_727_000)).toBe('1:02:07')
+  })
+
+  test('base64 both ways', () => {
+    const bytes = new Uint8Array([0, 1, 2, 250, 251, 252, 7])
+    expect(toBase64(bytes)).toBe('AAEC+vv8Bw==')
+    expect([...fromBase64('AAEC+vv8Bw==')]).toEqual([0, 1, 2, 250, 251, 252, 7])
+  })
+
+  test('reads a bottom-up 24-bit BMP, top row first', () => {
+    // 2x2: bottom row red, green; top row blue, white; rows padded to 8 bytes
+    const header = new Uint8Array(54)
+    const view = new DataView(header.buffer)
+    header[0] = 0x42
+    header[1] = 0x4d
+    view.setUint32(10, 54, true)
+    view.setInt32(18, 2, true)
+    view.setInt32(22, 2, true)
+    view.setUint16(28, 24, true)
+    const rows = [0, 0, 255, 0, 255, 0, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0]
+    const bmp = new Uint8Array([...header, ...rows])
+    expect(readBmp(bmp)).toEqual({ width: 2, height: 2, pixels: [0x0000ff, 0xffffff, 0xff0000, 0x00ff00] })
+    expect(readBmp(new Uint8Array([1, 2, 3]))).toBe(null)
+  })
+
+  test('draws two pixels a cell, the upper as ink', () => {
+    const cells = pixelsToCells({ width: 1, height: 2, pixels: [0x112233, 0x445566] }, 1, 1)
+    const words = new Uint32Array(fromBase64(cells).buffer)
+    expect([...words]).toEqual([0x2580, 0x112233, 0x445566])
+  })
+})
