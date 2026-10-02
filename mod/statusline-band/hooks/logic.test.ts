@@ -21,6 +21,7 @@ import {
   addPlayed,
   parseSpotify,
   pixelsToCells,
+  withGlyphs,
   readBmp,
   safeTrackUri,
   parseSearch,
@@ -490,3 +491,16 @@ describe('search table', () => {
   })
 })
 
+
+describe('raster glyphs', () => {
+  test('puts a character in one cell and leaves the rest', () => {
+    const cells = pixelsToCells({ width: 2, height: 2, pixels: [CLEAR, CLEAR, CLEAR, CLEAR] }, 2, 1)
+    const words = new Uint32Array(fromBase64(withGlyphs(cells, 2, [{ column: 1, row: 0, char: 'Z', color: 0xa1a1aa }])).slice().buffer)
+    expect([...words]).toEqual([0x20, CLEAR, CLEAR, 0x5a, 0xa1a1aa, CLEAR])
+  })
+
+  test('skips a glyph outside the grid', () => {
+    const cells = pixelsToCells({ width: 2, height: 2, pixels: [CLEAR, CLEAR, CLEAR, CLEAR] }, 2, 1)
+    expect(withGlyphs(cells, 2, [{ column: 5, row: 0, char: 'Z', color: 1 }])).toBe(cells)
+  })
+})

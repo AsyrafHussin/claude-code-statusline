@@ -35,6 +35,8 @@ export type Music = {
   isShuffling: boolean
   isRepeating: boolean
   volume: number
+  // When the track was paused, epoch ms; null while it plays
+  pausedAt: number | null
   // The last few tracks heard before this one, newest first
   recent: { trackId: string; name: string; artist: string; at: number }[]
 }

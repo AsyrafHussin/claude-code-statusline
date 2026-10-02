@@ -527,6 +527,22 @@ export const pixelsToCells = (picture: { width: number; height: number; pixels: 
   return toBase64(new Uint8Array(words.buffer))
 }
 
+// Raster cells with some replaced by a character in a color on a clear background, such as the Z's
+// beside a sleeping mascot. Cells outside the grid are left out
+export const withGlyphs = (
+  cells: string,
+  columns: number,
+  glyphs: { column: number; row: number; char: string; color: number }[],
+) => {
+  const words = new Uint32Array(fromBase64(cells).slice().buffer)
+  const rows = words.length / 3 / columns
+  for (const g of glyphs) {
+    if (g.column < 0 || g.column >= columns || g.row < 0 || g.row >= rows) continue
+    words.set([g.char.codePointAt(0) ?? 0x20, g.color, CLEAR], (g.row * columns + g.column) * 3)
+  }
+  return toBase64(new Uint8Array(words.buffer))
+}
+
 // The Claude plan, from Claude Code's own ~/.claude.json: "Max 5x", "Max 20x", "Pro", "Team",
 // "Enterprise", or null when the file says no plan (an API key, a missing account)
 export const planLabel = (configText: string): string | null => {

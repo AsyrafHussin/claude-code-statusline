@@ -159,7 +159,7 @@ cd claude-code-statusline
 | **Card** | A near-black card behind the frame, with empty rows around the stats |
 | **Actions** | A row under the card that sends a prompt as if you typed it: `push` (commit and push), `find bugs`, `run tests`, `summarize`. `quick commit` has Haiku write a message from the diff, shows it for you to commit, commit and push, or type your own, then commits itself without a turn of the main model. Click one, or focus the band (ctrl+x tab), move to it and press Enter |
 | **Git switches** | `commit auto · push ask` on the right of the actions, kept per repo. On `ask`, Claude's `git add` or `commit`, or `push`, waits for your OK; on `auto` Claude also does it on its own, committing each finished change and pushing right after, without a prompt, but only in its plain form, naming its repo with `-C`: `git -C '/abs/path' add …`, `commit -m '…'`, `push [remote] [branch]`, joined by `&&`. Any other shape asks: a step without `-C`, a force push, a heredoc, `$(…)`, a `cd`, a wrapper like `env`, or an alias that commits or pushes. Nothing is allowed in plan mode. When a step asks, a line under the dialog says what it takes with it (`↑ 3 commits +518 −20 to origin/main`). The system prompt also tells Claude the plain form and where each switch stands. Click `commit` or `push` to flip it |
-| **Spotify** | While Spotify runs (macOS), a card framed in Spotify green under the band, with Beatbot, a little Spotify mascot, dancing under Clawd while a track plays: the state and the track, ◀◀ ❚❚ ▶▶, `search`, progress with the time, shuffle, repeat and volume − +, and the track heard before it. `search` (or `/spotify-search`) opens a pane: type, then pick one of up to 10 tracks to play it. The playing playlist is not shown: Spotify gives it only through its Web API, which needs a sign-in |
+| **Spotify** | While Spotify runs (macOS), a card framed in Spotify green under the band, with Beatbot, a little Spotify mascot, dancing under Clawd while a track plays and asleep with Z's after 10 paused minutes: the state and the track, ◀◀ ❚❚ ▶▶, `search`, progress with the time, shuffle, repeat and volume − +, and the track heard before it. `search` (or `/spotify-search`) opens a pane: type, then pick one of up to 10 tracks to play it. The playing playlist is not shown: Spotify gives it only through its Web API, which needs a sign-in |
 | **Minimize** | `minimize` on the bottom edge of either card shrinks it to one line from the band's left edge, without Clawd or Beatbot; `expand` brings it back. Each card remembers its choice across sessions |
 | **Clawd** | Stands and blinks when idle, runs while Claude works (the border turns orange); sweats while a rate limit is at 95% or more (the border turns red), falls asleep after 10 quiet minutes, and cheers when your commits are pushed |
 
@@ -194,7 +194,7 @@ Each is a row in `/config`, or set them in `~/.claude/settings.json`:
 
 ### Tests
 
-The pure logic (pace, dates, the 30-day sums, formatting, settings, the git command checks, Spotify parsing and pixels) lives in `hooks/logic.ts`, with tests beside it in `hooks/logic.test.ts`:
+The pure logic (pace, dates, the 30-day sums, formatting, settings, the git command checks, Spotify parsing and pixels) lives in `hooks/logic.ts`, with tests beside it in `hooks/logic.test.ts`. The band's widths live in `hooks/layout.ts`, and `hooks/layout.test.ts` holds every card edge to its card's width, and the Spotify controls to the room they have, across terminal widths:
 
 ```bash
 claude plugin test mod/statusline-band

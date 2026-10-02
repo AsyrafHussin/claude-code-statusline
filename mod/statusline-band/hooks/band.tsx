@@ -14,10 +14,23 @@ import {
   CLEAR,
   perHour,
   pixelsToCells,
+  withGlyphs,
   runsOutIn,
   shirtText,
 } from './logic'
 import type { GitStep } from './logic'
+import {
+  BEATBOT_PAD,
+  BEATBOT_SLEEP_MS,
+  BEFORE_BAR,
+  BEFORE_TIME,
+  CONTROL_PIECES,
+  CLAWD_WIDTH,
+  MAIN_BOTTOM_TAIL,
+  MUSIC_BOTTOM_TAIL,
+  bottomFill,
+  musicRow,
+} from './layout'
 import { BLINK_FRAME, DANCE_FRAMES, LOGO_COLUMNS, LOGO_ROWS, PALETTE, STANDING } from './spotify-logo'
 import { COLORS, LIMIT_LABELS } from './state'
 import type { Config, GitAuto } from './state'
@@ -39,6 +52,21 @@ const logoCells = (grid: string[]) =>
 const LOGO_CELLS = logoCells(STANDING)
 const DANCE_CELLS = DANCE_FRAMES.map(logoCells)
 const BLINK_CELLS = logoCells(BLINK_FRAME)
+// Asleep: eyes shut, with a Z and a z in the free column on his right, trading places each step
+const SLEEP_STEP = 4
+const Z_COLOR = 0xa1a1aa
+const SLEEP_CELLS = BLINK_CELLS
+  ? [
+      withGlyphs(BLINK_CELLS, LOGO_COLUMNS, [
+        { column: LOGO_COLUMNS - 1, row: 0, char: 'Z', color: Z_COLOR },
+        { column: LOGO_COLUMNS - 1, row: 1, char: 'z', color: Z_COLOR },
+      ]),
+      withGlyphs(BLINK_CELLS, LOGO_COLUMNS, [
+        { column: LOGO_COLUMNS - 1, row: 0, char: 'z', color: Z_COLOR },
+        { column: LOGO_COLUMNS - 1, row: 1, char: 'Z', color: Z_COLOR },
+      ]),
+    ]
+  : []
 
 export type MusicCommand = 'playpause' | 'next' | 'previous' | 'shuffle' | 'repeat' | 'louder' | 'quieter' | 'open' | 'search' | 'compact'
 
@@ -95,9 +123,6 @@ const SHIRT_COLOR = '#2563eb'
 const SWEAT_COLOR = '#60a5fa'
 const SPARK_COLOR = '#fde047'
 const SLEEP_COLOR = '#a1a1aa'
-const CLAWD_WIDTH = 11
-// The column where Clawd's head and shirt begin, past the two columns kept for dust and his arm
-const CLAWD_BODY_FROM = 3
 // Where the actions under the card start, and the Spotify text with them: past Clawd and the frame's edge
 const INDENT = CLAWD_WIDTH + CARD_INSET + 3
 const CLAWD_HEAD = ' ▐▛███▜▌ '
@@ -260,8 +285,9 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
     { text: ' ' },
   ]
   // On its right, after the time, the button that shrinks the card to one line
-  const fill = Math.max(1, total - width(changes) - width(clock) - 2 - '· minimize ─╯'.length)
-  const bottom = [line('╰─'), ...changes, line('─'.repeat(fill)), ...clock, { text: '· ', dim: true }]
+  const [mainDot = '', minimizeLabel = '', mainCorner = ''] = MAIN_BOTTOM_TAIL
+  const fill = bottomFill(total, width(changes) + width(clock), MAIN_BOTTOM_TAIL)
+  const bottom = [line('╰─'), ...changes, line('─'.repeat(fill)), ...clock, { text: mainDot, dim: true }]
 
   // Shrunk: one line from the band's left edge, in place of the card and Clawd: the repo and branch, the model, each limit and the
   // context as a percent, the first git fact, and the session cost, with the button that brings it back
@@ -398,12 +424,16 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
   // Its top edge holds the state and the track; inside, the controls, progress with the time, and
   // shuffle, repeat and volume; its bottom edge, the track heard before this one
   const drawMusic = (m: Music) => {
-    // Beatbot dances through his frames while a track plays, and stands (blinking now and then) while not
+    // Beatbot dances through his frames while a track plays, stands (blinking now and then) while not,
+    // and falls asleep, Z's rising beside him, once the track has been paused BEATBOT_SLEEP_MS
+    const isAsleep = !m.isPlaying && m.pausedAt !== null && s.now - m.pausedAt >= BEATBOT_SLEEP_MS
     const mascotCells = m.isPlaying
       ? DANCE_CELLS[view.danceTick % DANCE_CELLS.length] ?? LOGO_CELLS
-      : view.isBlinking
-        ? BLINK_CELLS
-        : LOGO_CELLS
+      : isAsleep
+        ? SLEEP_CELLS[Math.floor(view.danceTick / SLEEP_STEP) % SLEEP_CELLS.length] ?? BLINK_CELLS
+        : view.isBlinking
+          ? BLINK_CELLS
+          : LOGO_CELLS
     const cardWidth = total
     // ▶ is one column narrower than ❚❚: the column goes after ▶▶, so the controls sit evenly and
     // nothing after them moves when the track plays or pauses
@@ -440,8 +470,8 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
       ? [{ text: ' ' }, { text: `last: ${last.name} — ${last.artist} · ${s.now - last.at < 60_000 ? 'just now' : `${formatReset(s.now - last.at)} ago`}`, dim: true }, { text: ' ' }]
       : []
     // ...and on its right, the button that shrinks the card to one line
-    const MINIMIZE = ' minimize '
-    const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(Math.max(1, cardWidth - width(lastSegs) - 2 - MINIMIZE.length - 2))), { text: ' ' }]
+    const [musicGap = '', musicMinimize = '', musicCorner = ''] = MUSIC_BOTTOM_TAIL
+    const bottomLine = [line('╰─'), ...lastSegs, line('─'.repeat(bottomFill(cardWidth, width(lastSegs), MUSIC_BOTTOM_TAIL))), { text: musicGap }]
 
     // Shrunk: one line from the band's left edge, no frame and no Beatbot, from the play controls to the track and the time,
     // with the button that brings the card back
@@ -472,14 +502,9 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
     // Inside: the controls, progress and the time, then shuffle, repeat and volume on the right. As the
     // card narrows, the toggles go first, then the progress bar, so nothing wraps or runs together
     const toggles = `shuffle · repeat · vol − ${m.volume}% +`
-    // The controls take ◀◀ ❚❚ ▶▶ and "search", 23 columns with their gaps
-    const CONTROLS = 23
-    const inner = cardWidth - 2 - 4
-    const MIN_BAR = 8
-    const hasToggles = inner >= CONTROLS + 4 + MIN_BAR + 2 + time.length + 3 + toggles.length
-    const hasBar = inner >= CONTROLS + 4 + MIN_BAR + 2 + time.length
-    const hasTime = inner >= CONTROLS + 4 + time.length
-    const cells = hasBar ? Math.max(MIN_BAR, inner - CONTROLS - 4 - (time.length + 2) - (hasToggles ? toggles.length + 3 : 0)) : 0
+    const { hasToggles, hasBar, hasTime, bar: cells } = musicRow(cardWidth, time.length, toggles.length)
+    // The gaps between the controls, as layout.ts counts them
+    const [, controlGap = '', , , , searchGap = ''] = CONTROL_PIECES
     const filled = m.durationMs > 0 ? Math.min(cells, Math.round((m.positionMs / m.durationMs) * cells)) : 0
     const toggle = (key: MusicCommand, label: string, isOn: boolean) => (
       <Button key={`music-${key}`} plain dimColor={!isOn} label={label} onPress={() => view.onMusic(key)} />
@@ -489,7 +514,7 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
       <Box>
         {/* Under Clawd, Beatbot dances while Spotify plays; an empty grid falls back to the PNG
             as an Image, which kitty and Ghostty draw and other terminals show as its alt, the word Spotify */}
-        <Box width={CLAWD_WIDTH} flexShrink={0} paddingLeft={CLAWD_BODY_FROM - 1}>
+        <Box width={CLAWD_WIDTH} flexShrink={0} paddingLeft={BEATBOT_PAD}>
           {mascotCells && view.canDrawArt && Raster ? (
             <Raster key="spotify-logo" columns={LOGO_COLUMNS} rows={LOGO_ROWS} cells={mascotCells} />
           ) : view.logoFile && Image ? (
@@ -503,18 +528,18 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
             <Box flexGrow={1} paddingX={2} justifyContent="space-between">
               <Box flexShrink={0}>
                 <Button key="music-previous" plain label="◀◀" onPress={() => view.onMusic('previous')} />
-                <Text>{'  '}</Text>
+                <Text>{controlGap}</Text>
                 <Button key="music-play" plain label={m.isPlaying ? '❚❚' : '▶'} onPress={() => view.onMusic('playpause')} />
-                <Text>{'  '}</Text>
+                <Text>{controlGap}</Text>
                 <Button key="music-next" plain label="▶▶" onPress={() => view.onMusic('next')} />
-                <Text>{`${pausePad}   `}</Text>
+                <Text>{`${pausePad}${searchGap}`}</Text>
                 <Button key="music-search" plain dimColor label="search" onPress={() => view.onMusic('search')} />
-                {hasTime ? <Text>{'    '}</Text> : null}
+                {hasTime ? <Text>{BEFORE_BAR}</Text> : null}
                 {hasTime ? (
                   <Text wrap="truncate">
                     <Text color={SPOTIFY_GREEN}>{'━'.repeat(filled)}</Text>
                     <Text dimColor>{'━'.repeat(cells - filled)}</Text>
-                    <Text dimColor>{`${hasBar ? '  ' : ''}${time}`}</Text>
+                    <Text dimColor>{`${hasBar ? BEFORE_TIME : ''}${time}`}</Text>
                   </Text>
                 ) : null}
               </Box>
@@ -532,8 +557,8 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
           </Box>
           <Box>
             <Text wrap="truncate">{draw(bottomLine)}</Text>
-            <Button key="music-compact" plain dimColor label={MINIMIZE.trim()} onPress={() => view.onMusic('compact')} />
-            <Text>{draw([line(' ─╯')])}</Text>
+            <Button key="music-compact" plain dimColor label={musicMinimize} onPress={() => view.onMusic('compact')} />
+            <Text>{draw([line(musicCorner)])}</Text>
           </Box>
         </Box>
       </Box>
@@ -594,8 +619,8 @@ export function drawBand({ Box, Button, Text, Raster, Image }: Kit, view: BandVi
           </Box>
           <Box>
             <Text wrap="truncate">{draw(bottom)}</Text>
-            <Button key="card-compact" plain dimColor label="minimize" onPress={view.onCardCompact} />
-            <Text>{draw([line(' ─╯')])}</Text>
+            <Button key="card-compact" plain dimColor label={minimizeLabel} onPress={view.onCardCompact} />
+            <Text>{draw([line(mainCorner)])}</Text>
           </Box>
         </Box>
       </Box>

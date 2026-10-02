@@ -5,6 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import { drawBand } from './band'
+import { BEATBOT_SLEEP_MS } from './layout'
 import type { MusicCommand } from './band'
 import type { Action } from './band'
 import {
@@ -525,13 +526,18 @@ async function readSpotify($: EngineInterface) {
     recent = addPlayed(recent, { trackId: before.trackId, name: before.name, artist: before.artist, at: await $.clock.now() })
     await $.store.set(RECENT_KEY, recent)
   }
-  await update($, music, () => ({ ...playing, recent: recent.filter(t => t.trackId !== playing.trackId).slice(0, RECENT_SHOWN) }))
+  // When the track was paused, kept while it stays paused (a pause seen at load counts from then)
+  const pausedAt = playing.isPlaying ? null : before && !before.isPlaying && before.pausedAt !== null ? before.pausedAt : await $.clock.now()
+  await update($, music, () => ({ ...playing, pausedAt, recent: recent.filter(t => t.trackId !== playing.trackId).slice(0, RECENT_SHOWN) }))
 }
 
-// Steps only while Beatbot shows: a track plays and the card is not minimized, so the band is not
-// redrawn four times a second for nothing
+// Steps only while Beatbot moves and shows: dancing to a track, or asleep with his Z's, and the card not
+// minimized, so the band is not redrawn four times a second for nothing
 async function stepDance($: EngineInterface) {
-  if ((await read($, music))?.isPlaying && !(await read($, musicCompact))) await update($, danceTick, n => n + 1)
+  const m = await read($, music)
+  if (m === null || (await read($, musicCompact))) return
+  const isAsleep = !m.isPlaying && m.pausedAt !== null && (await $.clock.now()) - m.pausedAt >= BEATBOT_SLEEP_MS
+  if (m.isPlaying || isAsleep) await update($, danceTick, n => n + 1)
 }
 
 // The controls under the band, each one AppleScript line to Spotify; then the state is read again at once
