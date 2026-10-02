@@ -948,7 +948,6 @@ export const register: Register = (on, options) => {
       playingUri: (await read($, music))?.trackId ?? null,
       onSearch: query => void searchSpotify($, query),
       onPlay: track => void playFound($, track),
-      onClose: () => void $.ui.close({ id: SEARCH_PANE }),
     })
   })
 

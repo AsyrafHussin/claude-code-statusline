@@ -70,7 +70,6 @@ export type SearchView = {
   playingUri: string | null
   onSearch: (query: string) => void
   onPlay: (track: FoundTrack) => void
-  onClose: () => void
 }
 
 const SPOTIFY_GREEN = '#1db954'
@@ -83,13 +82,9 @@ export function drawSearchPane({ Box, Button, Text, Input }: Kit, view: SearchVi
   const count = found ? `${view.tracks.length} tracks` : view.status === 'searching' ? 'searching…' : ''
   return (
     <Box flexDirection="column" paddingTop={1} paddingLeft={2}>
-      {/* The heading, with a close mark of the pane's own right above the search box's corner */}
       <Box justifyContent="space-between">
         <Text color={SPOTIFY_GREEN} bold>{'● Spotify'}</Text>
-        <Box>
-          <Text dimColor>{count ? `${count}   ` : ''}</Text>
-          <Button key="search-close" plain label="✕" onPress={view.onClose} />
-        </Box>
+        <Text dimColor>{count}</Text>
       </Box>
       <Box marginTop={1} borderStyle="round" borderColor={SPOTIFY_GREEN} paddingX={1}>
         {Input ? (
