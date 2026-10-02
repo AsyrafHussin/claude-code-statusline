@@ -51,7 +51,11 @@ export const formatTokens = (n: number) =>
         ? `${Math.round(n / 1000)}k`
         : `${n}`
 
-export const formatUsd = (usd: number) => (usd >= 100 ? `$${Math.round(usd)}` : `$${usd.toFixed(2)}`)
+// Dollars always to the cent, thousands split by commas: $0.57, $366.00, $1,234.56
+export const formatUsd = (usd: number) => {
+  const [whole = '0', cents = '00'] = Math.abs(usd).toFixed(2).split('.')
+  return `${usd < 0 ? '-' : ''}$${whole.replace(/\B(?=(\d{3})+$)/g, ',')}.${cents}`
+}
 
 export const formatDuration = (ms: number) => {
   const secs = Math.max(0, Math.floor(ms / 1000))

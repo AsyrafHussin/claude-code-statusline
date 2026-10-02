@@ -13,7 +13,7 @@ export const historyText = (days: HistoryDay[], span: number) => {
   const usd = days.reduce((sum, d) => sum + d.usd, 0)
   const tokens = days.reduce((sum, d) => sum + d.tokens, 0)
   return [
-    ...days.map(d => `${dayLabel(d.day)}  ${formatUsd(d.usd).padStart(7)}  ${(d.tokens > 0 ? formatTokens(d.tokens) : '-').padStart(6)}`),
+    ...days.map(d => `${dayLabel(d.day)}  ${formatUsd(d.usd).padStart(9)}  ${(d.tokens > 0 ? formatTokens(d.tokens) : '-').padStart(6)}`),
     `${span} days  ${formatUsd(usd)} · ${formatTokens(tokens)} tokens`,
   ].join('\n')
 }
@@ -38,7 +38,7 @@ export function drawHistoryPane(
             <Text dimColor>{`${dayLabel(d.day)}  `}</Text>
             <Text color={COLORS.ok}>{'█'.repeat(cells)}</Text>
             <Text dimColor>{'·'.repeat(HISTORY_BAR - cells)}</Text>
-            <Text color={d.usd > 0 ? COLORS.ok : undefined} dimColor={d.usd === 0}>{`  ${formatUsd(d.usd).padStart(7)}`}</Text>
+            <Text color={d.usd > 0 ? COLORS.ok : undefined} dimColor={d.usd === 0}>{`  ${formatUsd(d.usd).padStart(9)}`}</Text>
             <Text color={COLORS.model}>{`  ${(d.tokens > 0 ? formatTokens(d.tokens) : '–').padStart(6)}`}</Text>
           </Text>
         )

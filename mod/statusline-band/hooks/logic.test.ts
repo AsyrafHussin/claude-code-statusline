@@ -12,6 +12,7 @@ import {
   formatClock,
   formatReset,
   formatTokens,
+  formatUsd,
   fromBase64,
   gitDecision,
   isSensitivePath,
@@ -104,6 +105,10 @@ describe('formatting', () => {
   })
 
   test('tokens', () => {
+    expect(formatUsd(0.57)).toBe('$0.57')
+    expect(formatUsd(366)).toBe('$366.00')
+    expect(formatUsd(4000)).toBe('$4,000.00')
+    expect(formatUsd(1234567.891)).toBe('$1,234,567.89')
     expect(formatTokens(999)).toBe('999')
     expect(formatTokens(1500)).toBe('2k')
     expect(formatTokens(2_400_000)).toBe('2.4m')
