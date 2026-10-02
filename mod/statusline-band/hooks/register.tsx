@@ -12,7 +12,8 @@ import {
   formatTokens,
   formatUsd,
   gitDecision,
-  parseGitCommand,
+  looseGitSteps,
+  parsePlainGit,
   perHour,
   placeFolder,
   prettyModel,
@@ -177,9 +178,11 @@ async function markActive($: EngineInterface) {
   if ((await read($, mood)) === 'sleep') await update($, mood, () => 'idle')
 }
 
+const readAllGitAuto = async ($: EngineInterface) =>
+  ((await $.store.get(GIT_AUTO_KEY)) as Record<string, GitAuto> | undefined) ?? {}
+
 async function readGitAuto($: EngineInterface, root: string): Promise<GitAuto> {
-  const all = ((await $.store.get(GIT_AUTO_KEY)) as Record<string, GitAuto> | undefined) ?? {}
-  return { ...REVIEW, ...all[root] }
+  return { ...REVIEW, ...(await readAllGitAuto($))[root] }
 }
 
 // Flips one switch, auto or ask, for the repo the session is in, and redraws the band with it
@@ -187,7 +190,8 @@ async function toggleGitAuto($: EngineInterface, step: GitStep) {
   const s = await read($, snap)
   const root = s?.git?.root
   if (!s || !root) return
-  const all = ((await $.store.get(GIT_AUTO_KEY)) as Record<string, GitAuto> | undefined) ?? {}
+  // Read again right before the write, so a switch flipped elsewhere meanwhile is kept
+  const all = await readAllGitAuto($)
   const next = { ...REVIEW, ...all[root], [step]: !(all[root]?.[step] ?? false) }
   await $.store.set(GIT_AUTO_KEY, { ...all, [root]: next })
   await update($, snap, was => (was ? { ...was, gitAuto: next } : was))
@@ -213,7 +217,7 @@ async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']
     $.process.run(['git', '-C', cwd, 'diff', '--shortstat', 'HEAD'], GIT_TIMEOUT),
     // Lines in the commits not yet pushed; fails harmlessly without an upstream
     $.process.run(['git', '-C', cwd, 'diff', '--shortstat', '@{upstream}...HEAD'], GIT_TIMEOUT),
-    $.process.run(['git', '-C', cwd, 'rev-parse', '--show-toplevel'], GIT_TIMEOUT),
+    repoRoot($, cwd),
     $.process.run(['git', '-C', cwd, 'stash', 'list'], GIT_TIMEOUT),
     $.process.run(['git', '-C', cwd, 'log', '-1', '--format=%ct'], GIT_TIMEOUT),
   ])
@@ -231,7 +235,7 @@ async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']
   const stashed = stashes.stdout.split('\n').filter(row => row.trim() !== '').length
 
   return {
-    root: top.exitCode === 0 ? top.stdout.trim() : null,
+    root: top,
     branch,
     changed,
     hasUpstream,
@@ -402,7 +406,7 @@ async function refresh($: EngineInterface) {
     const limits = readings.map(l => ({ ...l, recentRate: rates[l.kind] }))
     const ctx = usage.context
 
-    const next: Snapshot = {
+    const next: Omit<Snapshot, 'gitAuto'> = {
       ...placeFolder(cwd, repo?.root ?? null),
       git: repo,
       model: prettyModel(model),
@@ -421,7 +425,6 @@ async function refresh($: EngineInterface) {
       rollingUsd: ledger ? sumDays(ledger.days, since, day) : null,
       limits,
       agents: agents.filter(a => a.status === 'running').length,
-      gitAuto: null,
     }
     // Commits that were waiting to go out and are now pushed: Clawd cheers
     const before = await read($, snap)
@@ -540,41 +543,34 @@ export const register: Register = (on, options) => {
     return ran
   })
 
-  // The switches at work: a git add, commit or push in a repo asks first while its switch is on ask,
-  // and runs without a prompt while it is on auto and the command is nothing but git
+  // The switches at work. A git add, commit or push asks while its switch is on ask. On auto it runs
+  // without a prompt only in its plain form (git -C /path add|commit -m '...'|push, joined by &&); any
+  // other shape, a force push among them, asks whatever the switch says
   on('classic.PreToolUse', { tool: 'Bash' }, async ($, e, next) => {
-    const parsed = parseGitCommand(e.command)
-    if (parsed.steps.length === 0) return next(e)
+    if (looseGitSteps(e.command).length === 0) return next(e)
     // Everything beneath runs first, your own settings hooks among them, and its ask or deny stands
     const below = await next(e)
     if (below.ask !== undefined || below.deny !== undefined) return below
-    // What else it answered (a rewrite, notes for the model) rides along with the switches' word
-    const kept = {
-      ...(below.updatedInput && { updatedInput: below.updatedInput }),
-      ...(below.additionalContext && { additionalContext: below.additionalContext }),
-    }
+    const { allow: _allow, ask: _ask, deny: _deny, ...kept } = below
+    // Judged as it will run: a hook beneath may have rewritten it
+    const rewritten = below.updatedInput?.command
+    const command = typeof rewritten === 'string' ? rewritten : e.command
+    const plain = parsePlainGit(command)
+    const loose = looseGitSteps(command)
     const cwd = await $.session.cwd()
-    // The folder the command names, when it can be told: ~ expanded, a $variable cannot be
-    const home = (await $.env.get('HOME')) ?? ''
-    const named = parsed.dir?.replace(/^~(?=\/|$)/, home)
-    const isUnknown = named !== undefined && named.includes('$')
-    const dir = named === undefined || isUnknown ? cwd : named.startsWith('/') ? named : `${cwd}/${named}`
-    const root = (await repoRoot($, dir)) ?? (isUnknown ? await repoRoot($, cwd) : null)
-    if (root === null) return isUnknown ? { ...kept, ask: 'Confirm this git step: the band could not tell which repo it is in.' } : below
-    // A repo the command names but the band cannot be sure of is held to ask
-    const auto = isUnknown ? REVIEW : await readGitAuto($, root)
-    const decision = gitDecision(parsed, auto)
+    const root = await repoRoot($, plain?.dir ?? cwd)
+    const auto = plain !== null && root !== null ? await readGitAuto($, root) : REVIEW
+    const decision = gitDecision(plain, loose, auto)
+    if (decision === 'pass') return below
     if (decision === 'allow') return { ...kept, allow: true }
-    if (decision === 'ask') {
-      const name = root.split('/').filter(Boolean).pop() ?? root
-      if (isUnknown) return { ...kept, ask: `Confirm this git step: the band could not be sure it is in ${name}.` }
-      const held = parsed.steps.filter(step => !auto[step])
-      if (held.length === 0) return { ...kept, ask: `${name}: a force push always asks, even with "push" on auto.` }
-      const doing = held.map(step => (step === 'push' ? 'pushing' : 'committing')).join(' and ')
-      const switches = held.map(step => `"${step}"`).join(' and ')
-      return { ...kept, ask: `${name} asks before ${doing}. Switch ${switches} to auto in the band to skip this.` }
+    const name = root?.split('/').filter(Boolean).pop() ?? 'this repo'
+    if (plain === null) {
+      return { ...kept, ask: `Confirm this git step. On auto the band only lets plain git add, commit -m and push through without asking.` }
     }
-    return below
+    const held = plain.steps.filter(step => !auto[step])
+    const doing = held.map(step => (step === 'push' ? 'pushing' : 'committing')).join(' and ')
+    const switches = held.map(step => `"${step}"`).join(' and ')
+    return { ...kept, ask: `${name} asks before ${doing}. Switch ${switches} to auto in the band to skip this.` }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

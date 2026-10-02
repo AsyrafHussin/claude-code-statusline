@@ -7,7 +7,7 @@ A panel above the Claude Code prompt, with Clawd, the Claude Code mascot, standi
 - **Bottom edge:** running subagents, uncommitted files and lines, unpushed commits and their lines, commits behind, stashes and the time since the last commit. On the right: the last reply's input (with its cached share) and output tokens, the session length and the time.
 - **Clawd:** runs while Claude works. Otherwise it sweats while a rate limit is at 95% or more, falls asleep after 10 quiet minutes, and cheers when your commits are pushed.
 - **Actions:** a row under the card sends a prompt as if you typed it: `push` (commit and push), `find bugs`, `run tests` and `summarize`. Click one, or focus the band with ctrl+x tab and press 1 to 4.
-- **Git switches:** `commit auto · push ask`, kept per repo. On `ask`, Claude's `git add` or `commit`, or `push`, waits for your OK. On `auto` it runs without a prompt, but only when the command is nothing but git. A force push always asks, and so does a git step whose repo the band cannot be sure of. Click `commit` or `push` to flip it.
+- **Git switches:** `commit auto · push ask`, kept per repo. On `ask`, Claude's `git add` or `commit`, or `push`, waits for your OK. On `auto` it runs without a prompt, but only in its plain form: `git [-C /abs/path] add <files>`, `git commit -m '…'` and `git push [remote] [branch]`, joined by `&&`, all in one repo, with nothing a shell could expand or redirect. Any other shape asks whatever the switch says: a force push, a heredoc, `$(…)`, a `cd`, a pipe, or git options before the step. Click `commit` or `push` to flip it.
 - **Extras:** hover a rate limit for its pace. Click `30d`, or run `/usage-history`, for a pane with each day's cost and tokens. Toasts fire when a limit passes 80% and 95%, and when its pace would run it out before the reset.
 
 Needs Claude Code v2.1.287 or later.
@@ -76,5 +76,5 @@ All of it stays in the plugin's own store on your machine, nothing else:
 - **`session.start`:** starts the panel's timers and registers `/usage-history`.
 - **`command.run`:** answers only its own `/usage-history` command, by opening the history pane.
 - **Action buttons:** pressing one calls `$.prompt.submit` with its fixed prompt; nothing is sent without a press.
-- **`classic.PreToolUse` (Bash only):** reads a command for `git add`, `commit` and `push`, and answers ask or allow by the repo's switches. Any other command passes on to your usual permissions untouched.
+- **`classic.PreToolUse` (Bash only):** runs the hooks beneath it first (your own settings hooks among them; their ask or deny stands), then reads the command as it will run for `git add`, `commit` and `push`, and answers ask or allow by the repo's switches. Any other command passes on to your usual permissions untouched.
 - **`ui.render`:** draws the panel above the prompt (`AbovePrompt`) and the history pane (`Pane`).

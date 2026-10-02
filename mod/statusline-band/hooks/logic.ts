@@ -95,50 +95,132 @@ export const placeFolder = (cwd: string, root: string | null) => {
 export const sumDays = (days: Record<string, number>, since: string, until: string) =>
   Object.entries(days).reduce((sum, [day, n]) => (day >= since && day <= until ? sum + n : sum), 0)
 
-// The git steps a Bash command takes that the per-repo switches govern: add and commit under "commit",
-// push under "push"; and whether the command is nothing but git, so allowing it lets nothing else through
+// The git steps the per-repo switches govern: add and commit under "commit", push under "push"
 export type GitStep = 'commit' | 'push'
-export type GitCommand = { steps: GitStep[]; isOnlyGit: boolean; isForcePush: boolean; dir?: string }
 
-// git's own options may come before the step: -C <dir>, -c key=value, --no-pager and the like
-const GIT_OPTIONS = String.raw`(?:\s+(?:-C\s+(?:"[^"]+"|'[^']+'|\S+)|-c\s+\S+|--?[A-Za-z][\w-]*(?:=\S+)?))*`
-const GIT_STEP = new RegExp(String.raw`\bgit\b(${GIT_OPTIONS})\s+(add|commit|push)\b([^\n;&|]*)`, 'g')
-const GIT_DIR = /-C\s+("[^"]+"|'[^']+'|\S+)/
-// A push that rewrites the remote's history: --force, --force-with-lease, -f alone or among other
-// short flags (-uf, -fu), or a "+branch" refspec
-const FORCE = /(?:^|\s)(?:--force(?:-with-lease)?(?:=\S*)?|-[A-Za-z]*f[A-Za-z]*|\+\S+)(?=\s|$)/
-// A heredoc's body is the commit message, not commands: "<<'EOF' ... EOF"
-const HEREDOC = /<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g
-const PLAIN_SEGMENT = new RegExp(
-  String.raw`^(?:cd\s+\S+|git${GIT_OPTIONS}\s+(?:add|commit|push|status|diff|log)\b[^|${'`'}$<>;&]*?(?:\s*<<HEREDOC)?(?:\s*2>&1)?(?:\s*\|\s*(?:tail|head)(?:\s+-n?\s*\d+)?)?)$`,
-)
+// A command the switches may allow without a prompt: one or more plain git steps joined by &&, all
+// in one repo, with nothing a shell could expand or redirect. Anything else is not plain, and asks.
+export type PlainGit = { steps: GitStep[]; dir?: string }
 
-const unquote = (path: string) => path.replace(/^(["'])(.*)\1$/, '$2')
-
-export const parseGitCommand = (command: string): GitCommand => {
-  // Read with the heredocs taken out, so "git push" written in a commit message is not a push
-  const bare = command.replace(HEREDOC, '<<HEREDOC')
-  const steps = new Set<GitStep>()
-  let dir: string | undefined
-  let isForcePush = false
-  for (const [, options = '', verb, rest = ''] of bare.matchAll(GIT_STEP)) {
-    steps.add(verb === 'push' ? 'push' : 'commit')
-    if (verb === 'push' && FORCE.test(rest)) isForcePush = true
-    const path = GIT_DIR.exec(options)?.[1]
-    if (dir === undefined && path) dir = unquote(path)
+// Splits a command into words, or gives null when it holds anything beyond plain words, single-quoted
+// text and && (double quotes, $, backticks, ;, |, redirections, newlines outside quotes, ~, globs...)
+const plainWords = (command: string): string[] | null => {
+  const words: string[] = []
+  let word = ''
+  let isInWord = false
+  for (let i = 0; i < command.length; i += 1) {
+    const c = command[i] ?? ''
+    if (c === "'") {
+      const end = command.indexOf("'", i + 1)
+      if (end === -1) return null
+      word += command.slice(i + 1, end)
+      isInWord = true
+      i = end
+    } else if (c === ' ' || c === '\t') {
+      if (isInWord) words.push(word)
+      word = ''
+      isInWord = false
+    } else if (c === '&') {
+      if (command[i + 1] !== '&' || isInWord) return null
+      words.push('&&')
+      i += 1
+    } else if (/[\w./@%+=:,-]/.test(c)) {
+      word += c
+      isInWord = true
+    } else {
+      return null
+    }
   }
-  const cd = /^\s*cd\s+("[^"]+"|'[^']+'|\S+)\s*&&/.exec(command)?.[1]
-  if (dir === undefined && cd) dir = unquote(cd)
-  const segments = bare.split(/&&|\|\||;|\n/).map(part => part.trim()).filter(Boolean)
-  const isOnlyGit = !/\$\(|`/.test(bare) && segments.length > 0 && segments.every(part => PLAIN_SEGMENT.test(part))
-  return { steps: [...steps], isOnlyGit, isForcePush, dir }
+  if (isInWord) words.push(word)
+  return words
 }
 
-// What the switches make of a command: ask while any step it takes is on ask (or it force-pushes), allow only a command
-// that is nothing but git with every step on auto, and otherwise leave it to the usual permissions
-export const gitDecision = (parsed: GitCommand, auto: Record<GitStep, boolean>): 'pass' | 'ask' | 'allow' => {
-  if (parsed.steps.length === 0) return 'pass'
-  // A force push always asks, whatever the switch says
-  if (parsed.isForcePush || parsed.steps.some(step => !auto[step])) return 'ask'
-  return parsed.isOnlyGit ? 'allow' : 'pass'
+// A repo path, a remote, a branch or a file: no leading dash, no "+" (a force refspec) and no ":"
+const NAME = /^[\w.@/%=,][\w.@/%=,-]*$/
+const ABSOLUTE = /^\/[\w.@/%=,-]+$/
+
+// One git step in its strict form, or null: add files, commit with -m messages, push a branch
+const plainStep = (args: string[]): { step: GitStep; dir?: string } | null => {
+  let rest = args
+  let dir: string | undefined
+  if (rest[0] === '-C') {
+    if (!ABSOLUTE.test(rest[1] ?? '')) return null
+    dir = rest[1]
+    rest = rest.slice(2)
+  }
+  const [verb, ...tail] = rest
+  if (verb === 'add') {
+    const isPlain = tail.length > 0 && tail.every(arg => arg === '-A' || arg === '--all' || NAME.test(arg))
+    return isPlain ? { step: 'commit', dir } : null
+  }
+  if (verb === 'commit') {
+    let messages = 0
+    for (let i = 0; i < tail.length; i += 1) {
+      const arg = tail[i]
+      if (arg === '-m') {
+        if (tail[i + 1] === undefined) return null
+        messages += 1
+        i += 1
+      } else if (arg !== '-q' && arg !== '--quiet' && arg !== '-a' && arg !== '--all') {
+        return null
+      }
+    }
+    return messages > 0 ? { step: 'commit', dir } : null
+  }
+  if (verb === 'push') {
+    const flags = tail.filter(arg => arg.startsWith('-'))
+    const names = tail.filter(arg => !arg.startsWith('-'))
+    const isPlain =
+      flags.every(arg => arg === '-u' || arg === '--set-upstream' || arg === '-q' || arg === '--quiet') &&
+      names.length <= 2 &&
+      names.every(arg => NAME.test(arg))
+    return isPlain ? { step: 'push', dir } : null
+  }
+  return null
+}
+
+export const parsePlainGit = (command: string): PlainGit | null => {
+  const words = plainWords(command.trim())
+  if (words === null || words.length === 0) return null
+  const steps = new Set<GitStep>()
+  const dirs = new Set<string | undefined>()
+  let segment: string[] = []
+  for (const word of [...words, '&&']) {
+    if (word !== '&&') {
+      segment.push(word)
+      continue
+    }
+    if (segment[0] !== 'git') return null
+    const step = plainStep(segment.slice(1))
+    if (step === null) return null
+    steps.add(step.step)
+    dirs.add(step.dir)
+    segment = []
+  }
+  // Every step in one repo: all with the same -C, or all without one
+  if (dirs.size !== 1) return null
+  return { steps: [...steps], dir: [...dirs][0] }
+}
+
+// The git steps a command may take, read loosely so a step hidden in any shape is still seen: git where
+// a command starts (after &&, ;, |, a newline, a subshell, `sh -c "`) with any options, then add,
+// commit or push. Reading too much only asks more.
+const LOOSE_STEP = /(?:^|[;&|\n(`{]|\$\(|-c\s+["'])\s*(?:\S*\/)?git\b(?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--?[\w-]+(?:=\S+)?))*\s+(add|commit|push)\b/g
+
+export const looseGitSteps = (command: string): GitStep[] => {
+  const steps = new Set<GitStep>()
+  for (const [, verb] of command.matchAll(LOOSE_STEP)) steps.add(verb === 'push' ? 'push' : 'commit')
+  return [...steps]
+}
+
+// What the switches make of a command: allow a plain one whose every step is on auto, ask for any other
+// that takes a git step, and pass the rest to the usual permissions
+export const gitDecision = (
+  plain: PlainGit | null,
+  loose: GitStep[],
+  auto: Record<GitStep, boolean>,
+): 'pass' | 'ask' | 'allow' => {
+  const steps = plain?.steps ?? loose
+  if (steps.length === 0) return 'pass'
+  return plain !== null && steps.every(step => auto[step]) ? 'allow' : 'ask'
 }

@@ -6,7 +6,8 @@ import {
   formatReset,
   formatTokens,
   gitDecision,
-  parseGitCommand,
+  looseGitSteps,
+  parsePlainGit,
   placeFolder,
   prettyModel,
   readConfig,
@@ -121,66 +122,78 @@ describe('settings', () => {
   })
 })
 
-describe('git ticks', () => {
+describe('git switches', () => {
   const all = { commit: true, push: true }
   const none = { commit: false, push: false }
+  const decide = (command: string, auto: { commit: boolean; push: boolean }) =>
+    gitDecision(parsePlainGit(command), looseGitSteps(command), auto)
 
-  test('finds the steps a command takes, and where', () => {
-    expect(parseGitCommand('git add -A && git commit -m "x" && git push')).toEqual({
+  test('reads the plain forms', () => {
+    expect(parsePlainGit("git add -A && git commit -m 'fix: a thing' && git push")).toEqual({
       steps: ['commit', 'push'],
-      isOnlyGit: true,
-      isForcePush: false,
       dir: undefined,
     })
-    expect(parseGitCommand('git -C /code/repo push').dir).toBe('/code/repo')
-    expect(parseGitCommand('cd "/code/my repo" && git push').dir).toBe('/code/my repo')
-    expect(parseGitCommand('git status').steps).toEqual([])
-  })
-
-  test('a commit message written in a heredoc is not read as commands', () => {
-    const command = "git commit -q -F - <<'EOF'\nfix: stop the git push loop; rm -rf nothing\nEOF\ngit push 2>&1 | tail -1"
-    expect(parseGitCommand(command)).toEqual({
-      steps: ['commit', 'push'],
-      isOnlyGit: true,
-      isForcePush: false,
-      dir: undefined,
+    expect(parsePlainGit('git -C /code/repo push -u origin main')).toEqual({ steps: ['push'], dir: '/code/repo' })
+    expect(parsePlainGit("git -C /code/repo commit -q -m 'line one\n\nline two'")).toEqual({
+      steps: ['commit'],
+      dir: '/code/repo',
     })
   })
 
-  test('anything beside git keeps a command from being allowed', () => {
-    expect(parseGitCommand('git push && rm -rf build').isOnlyGit).toBe(false)
-    expect(parseGitCommand('git commit -m "$(cat notes)" && git push').isOnlyGit).toBe(false)
-    expect(parseGitCommand('R=/code/repo; git -C $R push').isOnlyGit).toBe(false)
-    expect(parseGitCommand('git push > /tmp/out').isOnlyGit).toBe(false)
+  test('allows a plain command only with every step on auto', () => {
+    expect(decide('git push', all)).toBe('allow')
+    expect(decide('git push', none)).toBe('ask')
+    expect(decide("git add . && git commit -m 'x'", { commit: true, push: false })).toBe('allow')
+    expect(decide("git add . && git commit -m 'x' && git push", { commit: true, push: false })).toBe('ask')
+    expect(decide('ls -la', none)).toBe('pass')
+    expect(decide("grep -rn 'git push' README.md", none)).toBe('pass')
   })
 
-  test('asks while a step is unticked, allows only plain git with every step ticked', () => {
-    expect(gitDecision(parseGitCommand('git push'), none)).toBe('ask')
-    expect(gitDecision(parseGitCommand('git push'), { commit: true, push: false })).toBe('ask')
-    expect(gitDecision(parseGitCommand('git add . && git commit -m x'), { commit: true, push: false })).toBe('allow')
-    expect(gitDecision(parseGitCommand('git push'), all)).toBe('allow')
-    expect(gitDecision(parseGitCommand('git push && rm -rf build'), all)).toBe('pass')
-    expect(gitDecision(parseGitCommand('ls -la'), none)).toBe('pass')
-  })
-
-  test("finds steps behind git's own options", () => {
-    expect(parseGitCommand('git -c user.name=me commit -m x').steps).toEqual(['commit'])
-    expect(parseGitCommand('git --no-pager push origin main').steps).toEqual(['push'])
-    expect(parseGitCommand('git --no-pager -C /code/repo push').dir).toBe('/code/repo')
-    expect(parseGitCommand('git --no-pager push origin main').isOnlyGit).toBe(true)
-  })
-
-  test('keeps a $variable or ~ folder as written, for the hook to judge', () => {
-    expect(parseGitCommand('R=/code/repo; git -C $R commit -m x').dir).toBe('$R')
-    expect(parseGitCommand('cd ~/repo && git push').dir).toBe('~/repo')
-  })
-
-  test('a force push always asks, even on auto', () => {
-    for (const command of ['git push --force', 'git push -f origin main', 'git push -uf origin main', 'git push -fu', 'git push --force-with-lease', 'git push origin +main']) {
-      expect(gitDecision(parseGitCommand(command), all)).toBe('ask')
+  // Each shape below once slipped past as "only git"; now none is plain, so each asks even on auto
+  test('anything beyond plain git asks, even on auto', () => {
+    for (const command of [
+      "git commit -F - <<'EOF' && rm -rf ~/x\nmsg\nEOF",
+      'git commit -F - <<EOF\n$(touch /tmp/pwn)\nEOF',
+      'git push && rm -rf build',
+      'git commit -m "$(cat notes)" && git push',
+      'R=/code/repo; git -C $R push',
+      'git push > /tmp/out',
+      'git -c core.hooksPath=/tmp/h commit -m x',
+      'git push --receive-pack=/tmp/evil origin',
+      'git diff --output=/tmp/o && git add .',
+      'cd /other; git push',
+      "git add . && cd /other && git push",
+      "git -C /a commit -m 'x' && git -C /b push",
+      'cd ~/repo && git push',
+      'git --no-pager push origin main',
+      'sh -c "git push"',
+    ]) {
+      expect(decide(command, all)).toBe('ask')
     }
-    expect(parseGitCommand('git push origin main').isForcePush).toBe(false)
-    expect(parseGitCommand('git push -u origin main').isForcePush).toBe(false)
-    expect(parseGitCommand('git commit -m "use -f flag" && git push').isForcePush).toBe(false)
+  })
+
+  test('a force push always asks, in every spelling', () => {
+    for (const command of [
+      'git push --force',
+      'git push -f origin main',
+      'git push -uf origin main',
+      'git push -fu',
+      'git push --force-with-lease',
+      'git push --force-w origin main',
+      'git push --mirror',
+      'git push origin +main',
+      "git push origin '+main'",
+      'git push origin main:other',
+      'git push \\\n  --force',
+    ]) {
+      expect(decide(command, all)).toBe('ask')
+    }
+  })
+
+  test('a repo path is absolute and plain, the same for every step', () => {
+    expect(parsePlainGit('git -C repo push')).toBe(null)
+    expect(parsePlainGit("git -C '/code/my repo' push")).toBe(null)
+    expect(parsePlainGit('git -C /a add . && git -C /a push')).toEqual({ steps: ['commit', 'push'], dir: '/a' })
+    expect(parsePlainGit('git -C /a add . && git push')).toBe(null)
   })
 })
