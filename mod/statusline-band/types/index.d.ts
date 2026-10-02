@@ -1,8 +1,23 @@
-export type Limit = { kind: string; percent: number; resetsAt?: string; resetsOn?: string }
+export type Limit = { kind: string; percent: number; resetsAt?: string }
 
 export type Snapshot = {
   folder: string
-  git: { branch: string; changed: number; hasUpstream: boolean; ahead: number; behind: number; added: number; removed: number } | null
+  // The path below the repo's root, as "/mod/x", when the session runs in a subfolder
+  subdir: string
+  git: {
+    root: string | null
+    branch: string
+    changed: number
+    hasUpstream: boolean
+    ahead: number
+    behind: number
+    // Lines in uncommitted work, and in commits not yet pushed
+    added: number
+    removed: number
+    unpushedAdded: number
+    unpushedRemoved: number
+    stashed: number
+  } | null
   model: string
   startedAt: number
   now: number
@@ -22,6 +37,6 @@ export type CostLedger = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'statusline-band': { snap: Snapshot | null; ctxHistory: number[]; isCompacting: boolean; frame: number; isBlinking: boolean }
+    'statusline-band': { snap: Snapshot | null; isCompacting: boolean; frame: number; isBlinking: boolean }
   }
 }

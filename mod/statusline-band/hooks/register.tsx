@@ -4,16 +4,13 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { CostLedger, Limit, Snapshot } from '../types'
 
 const snap = atom({ plugin: 'statusline-band', key: 'snap' } as const, null)
-const history = atom({ plugin: 'statusline-band', key: 'ctxHistory' } as const, [])
 const isCompacting = atom({ plugin: 'statusline-band', key: 'isCompacting' } as const, false)
 const frame = atom({ plugin: 'statusline-band', key: 'frame' } as const, 0)
 const isBlinking = atom({ plugin: 'statusline-band', key: 'isBlinking' } as const, false)
 
 const LIMIT_LABELS: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }
 const RINGS = ['○', '◔', '◑', '◕', '●']
-// Low blocks only, so the trend stays a thin line beside the text
-const SPARKS = '▁▂▃▄'
-const HISTORY_LEN = 12
+const BAR_CELLS = 8
 const ALERT_THRESHOLDS = [80, 95]
 const COMPACT_AT = 80
 const LEDGER_DAYS = 62
@@ -21,6 +18,12 @@ const LEDGER_SESSIONS = 100
 // v2: the first ledger counted a resumed session's whole past cost as today's
 const COST_KEY = 'costs-v2'
 const GIT_TIMEOUT = { timeoutMs: 5000 }
+// Fetched in the background so "behind" stays true; never prompts for credentials
+const FETCH_EVERY_MS = 5 * 60_000
+const FETCH_INIT = {
+  timeoutMs: 30_000,
+  env: { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' },
+}
 // Clawd, the Claude Code mascot, beside the panel in a shirt with the owner's initials:
 // standing when idle, running while Claude works (arms and legs trade places each step,
 // dust kicked up behind)
@@ -51,7 +54,6 @@ const COLORS = {
   folder: '#fbbf24',
   branch: '#5eead4',
   model: '#7dd3fc',
-  spark: '#fdba74',
   border: '#71717a',
   borderBusy: '#d97757',
 }
@@ -86,13 +88,8 @@ const formatReset = (ms: number) => {
   return `${mins}m`
 }
 
-// Scaled to the trend's own range (at least 5 points), so a flat context reads as a flat line
-// Scaled to the trend's own range (at least 5 points), so a flat context reads as a flat line
-const sparkline = (values: number[]) => {
-  const lo = Math.min(...values)
-  const span = Math.max(5, Math.max(...values) - lo)
-  return values.map(v => SPARKS[Math.min(3, Math.floor(((v - lo) / span) * 3.99))]).join('')
-}
+// Filled cells for a percentage; any use at all shows at least one
+const barCells = (pct: number) => (pct <= 0 ? 0 : Math.min(BAR_CELLS, Math.max(1, Math.round((pct / 100) * BAR_CELLS))))
 
 let isRefreshing = false
 let runner: { cancel: () => void } | null = null
@@ -104,6 +101,8 @@ function startTimers($: EngineInterface) {
   if (hasTimers) return
   hasTimers = true
   $.clock.every(30_000, () => void refresh($))
+  void fetchUpstream($)
+  $.clock.every(FETCH_EVERY_MS, () => void fetchUpstream($))
   $.clock.every(BLINK_EVERY_MS, () => {
     void update($, isBlinking, () => true)
     $.clock.after(BLINK_FOR_MS, () => void update($, isBlinking, () => false))
@@ -118,19 +117,47 @@ async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']
       : (await $.process.run(['git', '-C', cwd, 'rev-parse', '--short', 'HEAD'], GIT_TIMEOUT)).stdout.trim()
   if (!branch) return null
 
-  const [status, counts, diff] = await Promise.all([
+  const [status, counts, diff, outgoing, top, stashes] = await Promise.all([
     $.process.run(['git', '-C', cwd, 'status', '--porcelain'], GIT_TIMEOUT),
     $.process.run(['git', '-C', cwd, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], GIT_TIMEOUT),
     $.process.run(['git', '-C', cwd, 'diff', '--shortstat', 'HEAD'], GIT_TIMEOUT),
+    // Lines in the commits not yet pushed; fails harmlessly without an upstream
+    $.process.run(['git', '-C', cwd, 'diff', '--shortstat', '@{upstream}...HEAD'], GIT_TIMEOUT),
+    $.process.run(['git', '-C', cwd, 'rev-parse', '--show-toplevel'], GIT_TIMEOUT),
+    $.process.run(['git', '-C', cwd, 'stash', 'list'], GIT_TIMEOUT),
   ])
-  const added = Number(/(\d+) insertion/.exec(diff.stdout)?.[1] ?? 0)
-  const removed = Number(/(\d+) deletion/.exec(diff.stdout)?.[1] ?? 0)
+  const lines = (shortstat: string) => ({
+    added: Number(/(\d+) insertion/.exec(shortstat)?.[1] ?? 0),
+    removed: Number(/(\d+) deletion/.exec(shortstat)?.[1] ?? 0),
+  })
+  const { added, removed } = lines(diff.stdout)
+  const unpushed = lines(outgoing.exitCode === 0 ? outgoing.stdout : '')
   const hasUpstream = counts.exitCode === 0
   const [ahead = 0, behind = 0] = hasUpstream ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0]
 
   const changed = status.stdout.split('\n').filter(row => row.trim() !== '').length
 
-  return { branch, changed, hasUpstream, ahead, behind, added, removed }
+  const stashed = stashes.stdout.split('\n').filter(row => row.trim() !== '').length
+
+  return {
+    root: top.exitCode === 0 ? top.stdout.trim() : null,
+    branch,
+    changed,
+    hasUpstream,
+    ahead,
+    behind,
+    added,
+    removed,
+    unpushedAdded: unpushed.added,
+    unpushedRemoved: unpushed.removed,
+    stashed,
+  }
+}
+
+async function fetchUpstream($: EngineInterface) {
+  const cwd = await $.session.cwd()
+  const fetched = await $.process.run(['git', '-C', cwd, 'fetch', '--quiet', '--no-tags'], FETCH_INIT).catch(() => null)
+  if (fetched?.exitCode === 0) void refresh($)
 }
 
 // Adds what this session spent since its last reading to today's total, kept across sessions.
@@ -174,12 +201,11 @@ async function alertLimits($: EngineInterface, limits: Limit[]) {
   if (fresh.length > 0) await $.store.set('alerted', [...alerted, ...fresh].slice(-50))
 }
 
-// The reset moment in the machine's own timezone, as "Sat 7:00 PM"
-async function localDateTime($: EngineInterface, iso: string) {
-  const epoch = Math.floor(Date.parse(iso) / 1000)
-  if (!Number.isFinite(epoch)) return undefined
-  const { exitCode, stdout } = await $.process.run(['date', '-r', String(epoch), '+%a %-I:%M %p'])
-  return exitCode === 0 ? stdout.trim() : undefined
+// The repo's name, with the path below its root when the session runs in a subfolder
+const placeFolder = (cwd: string, root: string | null) => {
+  const base = (path: string) => path.split('/').filter(Boolean).pop() ?? path
+  if (root === null || !cwd.startsWith(root)) return { folder: base(cwd), subdir: '' }
+  return { folder: base(root), subdir: cwd.slice(root.length) }
 }
 
 async function refresh($: EngineInterface) {
@@ -200,18 +226,13 @@ async function refresh($: EngineInterface) {
     const costUsd = usage.cost?.usd ?? null
     const ledger = costUsd !== null ? await recordCost($, sessionId, costUsd, day, usage.startedAt >= midnight) : null
     const month = day.slice(0, 7)
-    const limits = await Promise.all(
-      usage.rateLimits.map(async (l): Promise<Limit> => ({
-        kind: l.kind,
-        percent: l.percentUsed,
-        resetsAt: l.resetsAt,
-        resetsOn: l.kind === 'seven_day' && l.resetsAt ? await localDateTime($, l.resetsAt) : undefined,
-      })),
+    const limits = usage.rateLimits.map(
+      (l): Limit => ({ kind: l.kind, percent: l.percentUsed, resetsAt: l.resetsAt }),
     )
     const ctx = usage.context
 
     const next: Snapshot = {
-      folder: cwd.split('/').filter(Boolean).pop() ?? cwd,
+      ...placeFolder(cwd, repo?.root ?? null),
       git: repo,
       model: prettyModel(model),
       startedAt: usage.startedAt,
@@ -271,10 +292,6 @@ export const register: Register = on => {
     const ran = await next(e)
     runner?.cancel()
     runner = null
-    // Recorded here rather than in refresh, which skips while another refresh runs
-    const { context } = await $.session.usage()
-    const pct = context.percent
-    if (pct !== undefined) await update($, history, list => [...list, pct].slice(-HISTORY_LEN))
     void refresh($)
     return ran
   })
@@ -289,7 +306,6 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const s = await read($, snap)
     if (e.props.hasSurvey || s === null) return next(e)
-    const trend = await read($, history)
     const compacting = await read($, isCompacting)
 
     const { Box, Button, Text } = $.ui.resolve(e)
@@ -308,47 +324,57 @@ export const register: Register = on => {
 
     // Top edge: the project as the panel's title
     const g = s.git
-    const gitSegs: Seg[] =
+    const sep: Seg = { text: ' · ', dim: true }
+    const diffSegs = (added: number, removed: number): Seg[] => [
+      ...(added > 0 ? [{ text: ` +${added}`, color: COLORS.ok }] : []),
+      ...(removed > 0 ? [{ text: ` −${removed}`, color: COLORS.hot }] : []),
+    ]
+    // Each git fact is its own group: uncommitted work, commits to push, commits to pull
+    const gitGroups: Seg[][] =
       g === null
         ? []
         : [
-            line(' ─ '),
-            { text: ` ${g.branch}`, color: COLORS.branch },
-            // Uncommitted files and lines, then what is unpushed or behind, each shown on its own
             ...(g.changed > 0
+              ? [[{ text: `✎ ${g.changed} ${g.changed === 1 ? 'file' : 'files'}`, color: COLORS.warn }, ...diffSegs(g.added, g.removed)]]
+              : []),
+            ...(g.ahead > 0
               ? [
-                  { text: ` ● ${g.changed} uncommitted`, color: COLORS.hot },
-                  ...(g.added > 0 ? [{ text: ` +${g.added}`, color: COLORS.ok }] : []),
-                  ...(g.removed > 0 ? [{ text: ` −${g.removed}`, color: COLORS.hot }] : []),
+                  [
+                    { text: `↑ ${g.ahead} ${g.ahead === 1 ? 'commit' : 'commits'}`, color: COLORS.warn },
+                    ...diffSegs(g.unpushedAdded, g.unpushedRemoved),
+                  ],
                 ]
               : []),
-            ...(!g.hasUpstream ? [{ text: ' ↑ no upstream', color: COLORS.warn }] : []),
-            ...(g.ahead > 0 ? [{ text: ` ↑${g.ahead} unpushed`, color: COLORS.warn }] : []),
-            ...(g.behind > 0 ? [{ text: ` ↓${g.behind} behind`, color: COLORS.hot }] : []),
+            ...(g.behind > 0 ? [[{ text: `↓ ${g.behind} behind`, color: COLORS.hot }]] : []),
+            ...(g.stashed > 0 ? [[{ text: `≡ ${g.stashed} stash`, color: COLORS.model }]] : []),
+            ...(!g.hasUpstream ? [[{ text: 'no upstream', color: COLORS.warn }]] : []),
             ...(g.changed === 0 && g.hasUpstream && g.ahead === 0 && g.behind === 0
-              ? [{ text: ' ✓ synced', color: COLORS.ok }]
+              ? [[{ text: '✓ synced', color: COLORS.ok }]]
               : []),
           ]
     const title: Seg[] = [
       line('╭─ '),
       { text: `◆ ${s.folder}`, color: COLORS.folder, bold: true },
-      ...gitSegs,
+      ...(s.subdir ? [{ text: s.subdir, dim: true }] : []),
+      ...(g === null ? [] : [line(' ─ '), { text: g.branch, color: COLORS.branch }]),
       line(' ─ '),
       { text: `✦ ${s.model}`, color: COLORS.model },
       { text: ' ' },
     ]
     const top = [...title, line('─'.repeat(Math.max(1, total - width(title) - 1))), line('╮')]
 
-    // Bottom edge: how long the session has run, and the time
+    // Bottom edge: the git groups on the left, how long the session has run and the time on the right
+    const changes: Seg[] =
+      gitGroups.length === 0 ? [] : [{ text: ' ' }, ...gitGroups.flatMap((group, i) => (i === 0 ? group : [sep, ...group])), { text: ' ' }]
     const clock: Seg[] = [
       { text: ' ' },
-      { text: formatDuration(s.now - s.startedAt), dim: true },
+      { text: `session ${formatDuration(s.now - s.startedAt)}`, dim: true },
       { text: ' · ', dim: true },
       { text: s.time, dim: true },
       { text: ' ' },
     ]
-    const fill = Math.max(1, total - width(clock) - 3)
-    const bottom = [line('╰'), line('─'.repeat(fill)), ...clock, line('─╯')]
+    const fill = Math.max(1, total - width(changes) - width(clock) - 4)
+    const bottom = [line('╰─'), ...changes, line('─'.repeat(fill)), ...clock, line('─╯')]
 
     const tick = e.props.isWorking ? await read($, frame) : null
     const step = tick === null ? 0 : Math.floor(tick / 2)
@@ -377,7 +403,7 @@ export const register: Register = on => {
       </Box>
     )
 
-    // Middle: one stat per window, spread across the panel
+    // Middle: one block per window, side by side between thin dividers
     const stat = (pct: number, label: string, extra: Seg[] = []): Seg[] => [
       { text: `${ring(pct)} `, color: toneHex(pct) },
       { text: `${Math.round(pct)}%`, bold: true, color: pct >= 50 ? toneHex(pct) : undefined },
@@ -389,32 +415,42 @@ export const register: Register = on => {
       ...s.limits.map(l => {
         const resetMs = l.resetsAt ? Date.parse(l.resetsAt) - s.now : 0
         const name = LIMIT_LABELS[l.kind] ?? l.kind
-        const when = [l.resetsOn, resetMs > 0 ? formatReset(resetMs) : undefined].filter(Boolean).join(' · ')
-        return stat(l.percent, when ? `${name} · ${when}` : name)
+        return stat(l.percent, resetMs > 0 ? `${name} · reset ${formatReset(resetMs)}` : name)
       }),
       ...(s.context
         ? [
-            stat(s.context.percent, `ctx ${formatTokens(s.context.tokens)}/${formatTokens(s.context.window)}`,
-              trend.length > 1 ? [{ text: ` ${sparkline(trend)}`, color: COLORS.spark }] : []),
+            [
+              { text: 'ctx ', dim: true },
+              { text: '▰'.repeat(barCells(s.context.percent)), color: toneHex(s.context.percent) },
+              { text: '▱'.repeat(BAR_CELLS - barCells(s.context.percent)), dim: true },
+              {
+                text: ` ${Math.round(s.context.percent)}%`,
+                bold: true,
+                color: s.context.percent >= 50 ? toneHex(s.context.percent) : undefined,
+              },
+              { text: ` ${formatTokens(s.context.tokens)}/${formatTokens(s.context.window)}`, dim: true },
+            ],
           ]
         : []),
     ]
     if (s.costUsd !== null) {
-      const cost: Seg[] = [{ text: formatUsd(s.costUsd), color: COLORS.ok, bold: true }]
+      const cost: Seg[] = [{ text: formatUsd(s.costUsd), color: COLORS.ok, bold: true }, { text: ' session', dim: true }]
       if (hours > 0.05) cost.push({ text: ` ${formatUsd(s.costUsd / hours)}/h`, dim: true })
       const extras: [number | null, string][] = [[s.todayUsd, 'today'], [s.monthUsd, 'mo']]
       let shown = s.costUsd
       for (const [usd, label] of extras) {
         if (usd === null || usd - shown < 0.01) continue
-        cost.push({ text: '  ·  ', dim: true }, { text: formatUsd(usd), color: COLORS.ok }, { text: ` ${label}`, dim: true })
+        cost.push({ text: ' · ', dim: true }, { text: formatUsd(usd), color: COLORS.ok }, { text: ` ${label}`, dim: true })
         shown = usd
       }
       stats.push(cost)
     }
 
-    // Drop the widest extras first when the terminal is too narrow for one row
+    // Drop the last blocks first when the terminal is too narrow for one row
+    const divider: Seg = { text: '  │  ', color: border }
     const room = total - 6
-    while (stats.length > 1 && stats.reduce((n, st) => n + width(st) + 4, 0) > room) stats.pop()
+    while (stats.length > 1 && stats.reduce((n, st) => n + width(st) + width([divider]), 0) > room) stats.pop()
+    const row = stats.flatMap((st, i) => (i === 0 ? st : [divider, ...st]))
 
     const ctxFull = s.context !== null && s.context.percent >= COMPACT_AT
 
@@ -426,7 +462,7 @@ export const register: Register = on => {
           <Box width={total}>
             <Text color={border}>│</Text>
             <Box flexGrow={1} justifyContent="space-between" paddingX={2}>
-              {stats.map(st => <Text>{draw(st)}</Text>)}
+              <Text wrap="truncate">{draw(row)}</Text>
               {ctxFull && !e.props.isWorking && (
                 <Button
                   key="compact"

@@ -126,21 +126,21 @@ cd claude-code-statusline
 `mod/statusline-band` is a [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) that shows the same information as a panel above the prompt, with Clawd, the Claude Code mascot, beside it. It needs Claude Code v2.1.287 or later.
 
 ```
-   ▐▛███▜▌    ╭─ ◆ claude-code-statusline ─  main ● +120 −34 ─ ✦ Opus 5.5 ──────────────╮
-  ▝▜ A H ▛▘   │  ◑ 47% 5h · 1h1m     ● 94% 7d · Sat 8:00 PM · 1d9h     ◔ 24% ctx 238k/1.0m ▁▂▃▄     $7.01 $12.09/h  │
-    ▘▘ ▝▝     ╰──────────────────────────────────────────────────────────────── 34m · 10:08 AM ─╯
+   ▐▛███▜▌    ╭─ ◆ claude-code-statusline ─ main ─ ✦ Opus 5.5 ──────────────────────────────────────────────────────────────╮
+  ▝▜ A H ▛▘   │  ◑ 47% 5h · reset 1h1m  │  ● 94% 7d · reset 1d9h  │  ctx ▰▰▱▱▱▱▱▱ 24% 238k/1.0m  │  $7.01 session · $9.06 today  │
+    ▘▘ ▝▝     ╰─ ✎ 2 files +57 −16 · ↑ 3 commits +518 ──────────────────────────────────────── session 34m · 10:08 AM ─╯
 ```
 
 | Part | Description |
 |------|-------------|
-| **Top edge** | Folder, branch, git status with lines added/removed, model |
-| **5h / 7d** | Rate limits as filling rings, with the reset countdown (and the weekly reset day and time) |
-| **ctx** | Context usage, tokens, and a trend over the last 12 turns |
+| **Top edge** | Repo name (with the subfolder dimmed when you're in one), branch, model |
+| **5h / 7d** | Rate limits as filling rings, with the reset countdown |
+| **ctx** | Context usage as a bar, with tokens used out of the window |
 | **Cost** | Session cost and hourly rate, plus today's and this month's spend across sessions |
-| **Bottom edge** | Session duration and the time |
+| **Bottom edge** | Uncommitted files and lines, unpushed commits and their lines, commits behind, stashes; then session duration and the time |
 | **Clawd** | Stands and blinks when idle, runs while Claude works; the border turns orange too |
 
-It also toasts once when a rate limit passes 80% and 95%, and shows a `compact` button when context passes 80%.
+It fetches the upstream in the background every 5 minutes (never prompting for credentials) so `behind` stays current. It also toasts once when a rate limit passes 80% and 95%, and shows a `compact` button when context passes 80%.
 
 To load it in every session, add its folder to the `env` block of `~/.claude/settings.json` (and remove `statusLine` if you no longer want the Bash version as well):
 
