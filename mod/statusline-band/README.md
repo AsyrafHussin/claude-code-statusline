@@ -8,8 +8,8 @@ A panel above the Claude Code prompt, with Clawd, the Claude Code mascot, standi
 - **Clawd:** runs while Claude works. Otherwise it sweats while a rate limit is at 95% or more, falls asleep after 10 quiet minutes, and cheers when your commits are pushed.
 - **Actions:** a row under the card sends a prompt as if you typed it: `push` (commit and push), `find bugs`, `run tests` and `summarize`. `quick commit` has Haiku write a message from the diff and shows it: commit, commit and push, or type your own; it then commits itself, without a turn of the main model. Click one, or focus the band with ctrl+x tab, move to it and press Enter.
 - **Git switches:** `commit auto · push ask`, kept per repo. On `ask`, Claude's `git add` or `commit`, or `push`, waits for your OK. On `auto` Claude also does it on its own: it commits each finished change, and pushes right after. It runs without a prompt, but only in its plain form, naming its repo with `-C`: `git -C '/abs/path' add <files>`, `git -C '/abs/path' commit -m '…'` and `git -C '/abs/path' push [remote] [branch]`, joined by `&&`. Any other shape asks whatever the switch says: a step without `-C` (the Bash tool keeps its own folder between calls), a force push, a heredoc, `$(…)`, a `cd`, a pipe, a wrapper such as `env` or `xargs`, or an alias that commits or pushes. Nothing is allowed in plan mode. Steps that only read (`status`, `log`, `diff`, `show`, with flags that only shape their output) may ride along. When a step asks, a line under the dialog says what it takes with it. The system prompt tells Claude the plain form and where each switch stands. Click `commit` or `push` to flip it.
-- **Spotify (macOS):** while Spotify runs, a card framed in Spotify green under the band shows the state and the track, ◀◀ ❚❚ ▶▶, progress with the time, shuffle, repeat and volume − +, and the track heard before it (kept across sessions). `search` (or `/spotify-search`) opens a dialog that searches Spotify and plays the track you pick, once `spotifyClientId` and `spotifyClientSecret` are set. `minimize`, on the card's bottom edge, shrinks it to one line (controls, track and time); `expand` brings it back. Beatbot, a little Spotify mascot drawn in pixels, dances under Clawd while a track plays. It asks Spotify through AppleScript every 5 seconds and never launches it. The playing playlist is not shown: Spotify gives it only through its Web API, which needs a sign-in.
-- **Minimize:** `minimize` on the bottom edge of the card shrinks it, with Clawd, to one line: repo and branch, model, limits and context as percents, the first git fact and the session cost; `expand` brings it back. Kept across sessions.
+- **Spotify (macOS):** while Spotify runs, a card framed in Spotify green under the band shows the state and the track, ◀◀ ❚❚ ▶▶, progress with the time, shuffle, repeat and volume − +, and the track heard before it (kept across sessions). `search` (or `/spotify-search`) opens a pane that searches Spotify and plays the track you pick, keeping the terminal in front, once `spotifyClientId` and the client secret are set. Beatbot, a little Spotify mascot drawn in pixels, dances under Clawd while a track plays. It asks Spotify through AppleScript every 5 seconds and never launches it. The playing playlist is not shown: Spotify gives it only through its Web API, which needs a sign-in.
+- **Minimize:** `minimize` on the bottom edge of either card shrinks it to one line from the band's left edge. The main card keeps the repo and branch, model, limits and context as percents, the first git fact and the session cost; the Spotify card keeps the controls, the track and the time. `expand` brings it back. Each card remembers its choice across sessions.
 - **Extras:** hover a rate limit for its pace. Click `30d`, or run `/usage-history`, for a pane with each day's cost and tokens. Toasts fire when a limit passes 80% and 95%, and when its pace would run it out before the reset.
 
 Needs Claude Code v2.1.287 or later.
@@ -42,7 +42,7 @@ Each is a row in `/config`, or run `/plugin configure statusline-band@claude-cod
 
 ### Programs it runs
 
-It runs two programs, never through a shell. The arguments are fixed except the folder (each `git` command runs in the repo's folder, `git -C <folder>`) and, for quick commit, the commit message you approved.
+It runs these programs, never through a shell. The arguments are fixed except the folder (each `git` command runs in the repo's folder, `git -C <folder>`), for quick commit the commit message you approved, and for a searched track its Spotify URI (checked to be `spotify:track:` and letters and digits only).
 
 - **`git`, read-only, to show the branch and its changes.** It runs:
   - `symbolic-ref --short HEAD` and `rev-parse --short HEAD` for the branch
@@ -55,21 +55,25 @@ It runs two programs, never through a shell. The arguments are fixed except the 
   These run every 30 seconds and after each tool call.
 - **`git`, when a git step of Claude's asks**, to say under the dialog what it takes with it: `status --porcelain` and `diff --shortstat HEAD` for a commit; `rev-parse --abbrev-ref @{upstream}`, `rev-list --count @{upstream}..HEAD` and `diff --shortstat @{upstream}...HEAD` for a push.
 - **`git`, when you press quick commit:** `status --porcelain`, `diff HEAD` and `log -5 --format=%s` to write the message; then, once you approve it, `add -A`, `commit -q -m <message>` and, if you chose it, `push`.
-- **`osascript`, for Spotify:** every 5 seconds, only while Spotify runs, to read the track; and on a press of a control (play, pause, skip, shuffle, repeat, volume).
+- **`osascript`, for Spotify:** every 5 seconds, only while Spotify runs, to read the track; on a press of a control (play, pause, skip, shuffle, repeat, volume); and when you pick a searched track, to play it and bring the app you were in back to the front.
+- **`security find-generic-password -s statusline-band-spotify -w`, for search:** once per load, the first time you search, to read the Spotify client secret from your macOS Keychain when the setting is empty.
 - **`date`, to read the local date and time** (`+%Y-%m-%d`, and `+%Y-%m-%d|%I:%M %p|%H|%M|%S`). It also formats a rate limit's reset moment in your timezone (`date -r <epoch>`).
 
 ### What it reads
 
 - **From the session:** the usage Claude Code reports (cost, context, rate limits and when they reset), the model's name, the session id and working folder, the subagents that are running, and the token counts at the end of each turn.
 - **From Claude Code's own `~/.claude.json`:** only your account's plan type and rate-limit tier, once per load, to show the plan.
-- **What it never reads:** the text of your prompts, Claude's replies or tool calls.
+- **From Spotify, while it runs:** the playing track's name, artist, album, length, position and id, and the shuffle, repeat and volume settings.
+- **From your macOS Keychain:** only the item `statusline-band-spotify`, the Spotify client secret, when you search.
+- **What it never reads:** the text of your prompts or Claude's replies. Of tool calls it reads only Bash commands, to find the git steps the switches cover.
 
 ### What it keeps
 
 All of it stays in the plugin's own store on your machine, nothing else:
 
 - each repo's git switches, by the repo's root
-
+- the last three Spotify tracks heard
+- whether each card is minimized
 - each day's cost and tokens, for the last 62 days
 - each session's last reading, for the last 100 sessions
 - rate-limit readings from the last 3 hours, used for the recent pace
@@ -88,11 +92,11 @@ All of it stays in the plugin's own store on your machine, nothing else:
 - **`tool.call`:** only notes the time and refreshes the panel after the call. It lets every call run unchanged and never blocks or rewrites one.
 - **`prompt.submit`:** starts Clawd's running animation. The prompt passes through unchanged.
 - **`turn.complete`:** stops the animation and adds the turn's token counts to the totals.
-- **`session.start`:** starts the panel's timers and registers `/usage-history`.
-- **`command.run`:** answers only its own `/usage-history` command, by opening the history pane.
+- **`session.start`:** starts the panel's timers and registers `/usage-history` and, with `spotify` on, `/spotify-search`.
+- **`command.run`:** answers only its own `/usage-history` and `/spotify-search` commands, by opening their panes.
 - **`attribution.text`:** with `noAttribution` on, answers an empty commit trailer and PR footer.
 - **`prompt.compose`:** adds one section to the system prompt: the git plain form, where each switch stands, and (with `noAttribution`) no credit lines.
 - **Action buttons:** pressing one calls `$.prompt.submit` with its fixed prompt; nothing is sent without a press. `quick commit` instead sends the diff (up to 24k characters) and the last five commit subjects to Haiku through Claude Code's own model call, then runs `git add -A`, `git commit -m` and, if you choose it, `git push` itself.
 - **`classic.UserPromptSubmit`, `classic.PostToolUse`:** read the permission mode and effort; they change nothing.
 - **`classic.PreToolUse` (Bash only):** runs the hooks beneath it first (your own settings hooks among them; their ask or deny stands), then reads the command as it will run for `git add`, `commit` and `push`, and answers ask or allow by the repo's switches. Any other command passes on to your usual permissions untouched.
-- **`ui.render`:** draws the panel above the prompt (`AbovePrompt`) and the history pane (`Pane`).
+- **`ui.render`:** draws the panel above the prompt (`AbovePrompt`), and the history and Spotify search panes (`Pane`).
