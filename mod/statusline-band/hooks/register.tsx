@@ -1,7 +1,26 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PluginOptions, Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
-import type { CostLedger, HistoryDay, Limit, PaceLog, Snapshot, TokenLedger } from '../types'
+import {
+  BAR_CELLS,
+  DEFAULTS,
+  WINDOW_MS,
+  barCells,
+  dayLabel,
+  formatDuration,
+  formatReset,
+  formatTokens,
+  formatUsd,
+  perHour,
+  placeFolder,
+  prettyModel,
+  readConfig,
+  runsOutIn,
+  shiftDay,
+  shirtText,
+  sumDays,
+} from './logic'
+import type { CostLedger, HistoryDay, Limit, Mood, PaceLog, Snapshot, TokenLedger } from '../types'
 
 const snap = atom({ plugin: 'statusline-band', key: 'snap' } as const, null)
 const isCompacting = atom({ plugin: 'statusline-band', key: 'isCompacting' } as const, false)
@@ -9,13 +28,11 @@ const frame = atom({ plugin: 'statusline-band', key: 'frame' } as const, 0)
 const isBlinking = atom({ plugin: 'statusline-band', key: 'isBlinking' } as const, false)
 const lastTurn = atom({ plugin: 'statusline-band', key: 'lastTurn' } as const, null)
 const history = atom({ plugin: 'statusline-band', key: 'history' } as const, [])
+const mood = atom({ plugin: 'statusline-band', key: 'mood' } as const, 'idle')
+const moodTick = atom({ plugin: 'statusline-band', key: 'moodTick' } as const, 0)
 
 const LIMIT_LABELS: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }
 const RINGS = ['○', '◔', '◑', '◕', '●']
-const BAR_CELLS = 8
-const WINDOW_MS: Record<string, number> = { five_hour: 5 * 3_600_000, seven_day: 7 * 86_400_000 }
-// Too early in a window, one burst would read as a runaway pace
-const PACE_MIN_ELAPSED = 0.05
 // The recent pace: readings kept every 5 minutes over the last 3 hours, read once they span 30 minutes
 const PACE_KEY = 'pace-v1'
 const PACE_SAMPLE_MS = 5 * 60_000
@@ -27,8 +44,6 @@ const LEDGER_DAYS = 62
 // The pane with each day's cost and tokens, opened by /usage-history or the "30d" label
 const HISTORY_PANE = 'usage-history'
 const HISTORY_BAR = 30
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const LEDGER_SESSIONS = 100
 // v2: the first ledger counted a resumed session's whole past cost as today's
 const COST_KEY = 'costs-v2'
@@ -57,6 +72,19 @@ const CLAWD_RUN = [
 ]
 const DUST = [['  ', '  ', ' ·'], ['  ', ' ·', '∙ '], ['  ', '  ', '· ']]
 const CLAWD_WIDTH = 11
+// Clawd's moods while Claude is not working: cheering just after a push, asleep after a quiet
+// spell, sweating while a rate limit is nearly used up
+const MOOD_TICK_MS = 800
+const CHEER_MS = 3500
+const SLEEP_AFTER_MS = 10 * 60_000
+const SWEAT_AT = 95
+const SWEAT_COLOR = '#60a5fa'
+const SPARK_COLOR = '#fde047'
+const SLEEP_COLOR = '#a1a1aa'
+const CLAWD_CHEER = [
+  { arms: ['▘', '▝'], legs: '  ▘▘ ▝▝  ' },
+  { arms: ['▘', '▝'], legs: ' ▘ ▘ ▝ ▝ ' },
+]
 // Room left for the band's own collapse mark ([-]) on the right, with a margin
 const ENGINE_MARK_WIDTH = 8
 const RUNNER_TICK_MS = 120
@@ -77,89 +105,17 @@ const COLORS = {
 
 // What each person sets for themselves in /config (the manifest's userConfig); read in register,
 // so a change there reloads the module with the new values
-const DEFAULTS = { initials: '', card: '#0a0a0a', padRows: 1, rollingDays: 30, fetchMinutes: 5 }
 let config = DEFAULTS
-
-const readConfig = (options: PluginOptions) => {
-  const text = (key: string, fallback: string) => (typeof options[key] === 'string' ? (options[key] as string) : fallback)
-  const whole = (key: string, fallback: number, lo: number, hi: number) =>
-    typeof options[key] === 'number' ? Math.min(hi, Math.max(lo, Math.round(options[key] as number))) : fallback
-  return {
-    initials: text('initials', DEFAULTS.initials),
-    card: text('cardColor', DEFAULTS.card),
-    padRows: whole('padRows', DEFAULTS.padRows, 0, 2),
-    rollingDays: whole('historyDays', DEFAULTS.rollingDays, 7, 62),
-    fetchMinutes: whole('fetchMinutes', DEFAULTS.fetchMinutes, 0, 60),
-  }
-}
-
-// Up to two initials across the shirt, as " A H "; none leaves it plain
-const shirtText = (initials: string) => {
-  const [a = ' ', b = ' '] = [...initials.replace(/\s/g, '').toUpperCase()]
-  return ` ${a} ${b} `
-}
 
 const toneHex = (pct: number) => (pct >= 80 ? COLORS.hot : pct >= 50 ? COLORS.warn : COLORS.ok)
 const ring = (pct: number) => RINGS[Math.min(4, Math.round((pct / 100) * 4))]
 
-// claude-opus-5-5 → Opus 5.5; anything else is shown as it came
-const prettyModel = (id: string) => {
-  const [, family, major, minor] = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(id) ?? []
-  return family ? `${family[0]?.toUpperCase()}${family.slice(1)} ${major}.${minor}` : id
-}
-
-const formatTokens = (n: number) =>
-  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}m` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`
-
-const formatUsd = (usd: number) => (usd >= 100 ? `$${Math.round(usd)}` : `$${usd.toFixed(2)}`)
-
-const formatDuration = (ms: number) => {
-  const secs = Math.max(0, Math.floor(ms / 1000))
-  if (secs >= 3600) return `${Math.floor(secs / 3600)}h${Math.floor((secs % 3600) / 60)}m`
-  if (secs >= 60) return `${Math.floor(secs / 60)}m`
-  return `${secs}s`
-}
-
-const formatReset = (ms: number) => {
-  const mins = Math.floor(ms / 60_000)
-  const days = Math.floor(mins / 1440)
-  const hours = Math.floor((mins % 1440) / 60)
-  if (days > 0) return `${days}d${hours}h`
-  if (hours > 0) return `${hours}h${mins % 60}m`
-  return `${mins}m`
-}
-
-// How long until a window runs out, when that comes before its reset: at the faster of the
-// pace across the whole window and the recent pace (percent per millisecond)
-const runsOutIn = (kind: string, pct: number, resetMs: number, recentRate?: number) => {
-  const windowMs = WINDOW_MS[kind]
-  if (windowMs === undefined || pct <= 0 || pct >= 100) return undefined
-  const elapsed = windowMs - resetMs
-  if (elapsed < windowMs * PACE_MIN_ELAPSED) return undefined
-  const rate = Math.max(pct / elapsed, recentRate ?? 0)
-  const left = (100 - pct) / rate
-  return left < resetMs ? left : undefined
-}
-
-// A local date ("2026-10-02") moved by whole days; a UTC calendar keeps the steps exact
-const shiftDay = (day: string, by: number) =>
-  new Date(Date.parse(`${day}T00:00:00Z`) + by * 86_400_000).toISOString().slice(0, 10)
-
-// "2026-10-02" as "Fri 02 Oct"
-const dayLabel = (day: string) => {
-  const date = new Date(`${day}T00:00:00Z`)
-  return `${WEEKDAYS[date.getUTCDay()]} ${day.slice(8)} ${MONTHS[date.getUTCMonth()]}`
-}
-
-// A pace in percent per millisecond, as "1.20%/h"
-const perHour = (rate: number) => `${(rate * 3_600_000).toFixed(2)}%/h`
-
-// Filled cells for a percentage; any use at all shows at least one
-const barCells = (pct: number) => (pct <= 0 ? 0 : Math.min(BAR_CELLS, Math.max(1, Math.round((pct / 100) * BAR_CELLS))))
-
 let isRefreshing = false
 let runner: { cancel: () => void } | null = null
 let hasTimers = false
+// When the person last did something, and until when Clawd cheers; both start over on a reload
+let lastActiveAt: number | null = null
+let cheerUntil = 0
 
 // The refresh and blink timers, started in session.start so they outlive any one event.
 // The other hooks call it too, for a hot reload, which starts the module over without one
@@ -169,10 +125,28 @@ function startTimers($: EngineInterface) {
   $.clock.every(30_000, () => void refresh($))
   if (config.fetchMinutes > 0) void fetchUpstream($)
   if (config.fetchMinutes > 0) $.clock.every(config.fetchMinutes * 60_000, () => void fetchUpstream($))
+  $.clock.every(MOOD_TICK_MS, () => void tickMood($))
   $.clock.every(BLINK_EVERY_MS, () => {
     void update($, isBlinking, () => true)
     $.clock.after(BLINK_FOR_MS, () => void update($, isBlinking, () => false))
   })
+}
+
+// Picks Clawd's mood and, while it has one, steps its animation
+async function tickMood($: EngineInterface) {
+  const now = await $.clock.now()
+  lastActiveAt ??= now
+  const s = await read($, snap)
+  const highest = Math.max(0, ...(s?.limits ?? []).map(l => l.percent))
+  const next: Mood =
+    now < cheerUntil ? 'cheer' : now - lastActiveAt > SLEEP_AFTER_MS ? 'sleep' : highest >= SWEAT_AT ? 'sweat' : 'idle'
+  if (next !== (await read($, mood))) await update($, mood, () => next)
+  if (next !== 'idle') await update($, moodTick, n => n + 1)
+}
+
+async function markActive($: EngineInterface) {
+  lastActiveAt = await $.clock.now()
+  if ((await read($, mood)) === 'sleep') await update($, mood, () => 'idle')
 }
 
 async function readGit($: EngineInterface, cwd: string): Promise<Snapshot['git']> {
@@ -342,13 +316,6 @@ async function localResetTime($: EngineInterface, iso: string, now: number) {
   return exitCode === 0 ? stdout.trim() : undefined
 }
 
-// The repo's name, with the path below its root when the session runs in a subfolder
-const placeFolder = (cwd: string, root: string | null) => {
-  const base = (path: string) => path.split('/').filter(Boolean).pop() ?? path
-  if (root === null || !cwd.startsWith(root)) return { folder: base(cwd), subdir: '' }
-  return { folder: base(root), subdir: cwd.slice(root.length) }
-}
-
 async function refresh($: EngineInterface) {
   if (isRefreshing) return
   isRefreshing = true
@@ -395,17 +362,15 @@ async function refresh($: EngineInterface) {
       tokens: {
         session: tokenLedger?.sessions[sessionId] ?? 0,
         today: tokenLedger?.days[day] ?? 0,
-        rolling: Object.entries(tokenLedger?.days ?? {}).reduce(
-          (sum, [d, n]) => (d >= since && d <= day ? sum + n : sum),
-          0,
-        ),
+        rolling: sumDays(tokenLedger?.days ?? {}, since, day),
       },
-      rollingUsd: ledger
-        ? Object.entries(ledger.days).reduce((sum, [d, usd]) => (d >= since && d <= day ? sum + usd : sum), 0)
-        : null,
+      rollingUsd: ledger ? sumDays(ledger.days, since, day) : null,
       limits,
       agents: agents.filter(a => a.status === 'running').length,
     }
+    // Commits that were waiting to go out and are now pushed: Clawd cheers
+    const before = await read($, snap)
+    if ((before?.git?.ahead ?? 0) > 0 && repo !== null && repo.hasUpstream && repo.ahead === 0) cheerUntil = now + CHEER_MS
     await update($, snap, () => next)
     await alertLimits($, limits, now)
   } finally {
@@ -480,6 +445,7 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     startTimers($)
+    await markActive($)
     if (runner === null) {
       let ticks = 0
       const timer = $.clock.every(RUNNER_TICK_MS, () => {
@@ -494,6 +460,7 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     startTimers($)
+    void markActive($)
     const ran = await next(e)
     runner?.cancel()
     runner = null
@@ -510,6 +477,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     startTimers($)
+    void markActive($)
     const ran = await next(e)
     void refresh($)
     return ran
@@ -531,7 +499,9 @@ export const register: Register = (on, options) => {
         <Text color={seg.color} bold={seg.bold} dimColor={seg.dim}>{seg.text}</Text>
       ))
 
-    const border = e.props.isWorking ? COLORS.borderBusy : COLORS.border
+    const feeling: Mood = e.props.isWorking ? 'idle' : await read($, mood)
+    const beat = await read($, moodTick)
+    const border = e.props.isWorking ? COLORS.borderBusy : feeling === 'sweat' ? COLORS.hot : COLORS.border
     const line = (text: string): Seg => ({ text, color: border })
     const total = Math.max(40, e.props.bodyColumns - 2 - CLAWD_WIDTH - ENGINE_MARK_WIDTH - CARD_INSET * 2)
 
@@ -649,10 +619,29 @@ export const register: Register = (on, options) => {
 
     const tick = e.props.isWorking ? await read($, frame) : null
     const step = tick === null ? 0 : Math.floor(tick / 2)
-    const pose = tick === null ? CLAWD_IDLE : CLAWD_RUN[step % CLAWD_RUN.length] ?? CLAWD_IDLE
+    const pose =
+      tick !== null
+        ? CLAWD_RUN[step % CLAWD_RUN.length] ?? CLAWD_IDLE
+        : feeling === 'cheer'
+          ? CLAWD_CHEER[beat % CLAWD_CHEER.length] ?? CLAWD_IDLE
+          : CLAWD_IDLE
     const dust = tick === null ? null : DUST[step % DUST.length]
-    const blink = tick === null && (await read($, isBlinking))
-    const puff = (row: number) => <Text color={DUST_COLOR}>{dust?.[row] ?? '  '}</Text>
+    const blink = tick === null && (feeling === 'sleep' || (await read($, isBlinking)))
+    // The two columns left of Clawd: dust while running, else a falling drop (an emoji, two wide), z's or
+    // sparkles by mood
+    const side: [string, string][] =
+      feeling === 'sweat'
+        ? [0, 1, 2].map(row => [row === beat % 3 ? '💧' : '  ', SWEAT_COLOR])
+        : feeling === 'sleep'
+          ? beat % 2 === 0
+            ? [[' Z', SLEEP_COLOR], ['z ', SLEEP_COLOR], ['  ', SLEEP_COLOR]]
+            : [['Z ', SLEEP_COLOR], [' z', SLEEP_COLOR], ['  ', SLEEP_COLOR]]
+          : feeling === 'cheer'
+            ? beat % 2 === 0
+              ? [['✦ ', SPARK_COLOR], ['  ', SPARK_COLOR], [' ✧', SPARK_COLOR]]
+              : [[' ✧', SPARK_COLOR], ['✦ ', SPARK_COLOR], ['  ', SPARK_COLOR]]
+            : [0, 1, 2].map(row => [dust?.[row] ?? '  ', DUST_COLOR])
+    const puff = (row: number) => <Text color={side[row]?.[1]}>{side[row]?.[0] ?? '  '}</Text>
     const clawd = (
       <Box flexDirection="column" width={CLAWD_WIDTH} flexShrink={0}>
         <Text>
